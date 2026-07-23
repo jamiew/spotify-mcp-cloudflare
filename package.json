@@ -1,27 +1,35 @@
 {
-  "name": "spotify-mcp",
-  "version": "0.2.0",
-  "description": "Remote MCP server for Spotify, deployed on Cloudflare Workers",
-  "license": "MIT",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "wrangler dev",
-    "start": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "cf-typegen": "wrangler types",
-    "type-check": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@cloudflare/workers-oauth-provider": "^0.8.1",
-    "@modelcontextprotocol/sdk": "^1.26.0",
-    "agents": "^0.17.1",
-    "hono": "^4.12.27",
-    "zod": "^4.4.3"
-  },
-  "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260628.1",
-    "typescript": "^5.9.0",
-    "wrangler": "^4.105.0"
-  }
+	"name": "spotify-mcp",
+	"version": "0.2.0",
+	"description": "Remote MCP server for Spotify, deployed on Cloudflare Workers",
+	"license": "MIT",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "wrangler dev",
+		"start": "wrangler dev",
+		"deploy": "wrangler deploy",
+		"cf-typegen": "wrangler types",
+		"type-check": "tsc --noEmit",
+		"lint": "biome check .",
+		"format": "biome check --write .",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"check": "pnpm lint && pnpm type-check && pnpm test"
+	},
+	"dependencies": {
+		"@cloudflare/workers-oauth-provider": "^0.8.1",
+		"@modelcontextprotocol/sdk": "^1.26.0",
+		"agents": "^0.17.1",
+		"hono": "^4.12.27",
+		"zod": "^4.4.3"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.5",
+		"@cloudflare/vitest-pool-workers": "^0.18.7",
+		"@cloudflare/workers-types": "^4.20260628.1",
+		"typescript": "^5.9.0",
+		"vitest": "^4.1.10",
+		"wrangler": "^4.105.0"
+	}
 }

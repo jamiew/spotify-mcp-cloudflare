@@ -122,7 +122,7 @@ export async function exchangeCodeForToken(opts: {
 	clientSecret: string;
 	code: string;
 	redirectUri: string;
-}): Promise<SpotifyTokens> {
+}): Promise<Required<SpotifyTokens>> {
 	const tr = await requestToken(opts.clientId, opts.clientSecret, {
 		grant_type: "authorization_code",
 		code: opts.code,

@@ -4,8 +4,9 @@ import {
 	exchangeCodeForToken,
 	getUpstreamAuthorizeUrl,
 	isEmailAllowed,
-	SPOTIFY_SCOPES,
 	type Props,
+	SPOTIFY_SCOPES,
+	type SpotifyTokens,
 } from "./utils";
 import {
 	addApprovedClient,
@@ -93,7 +94,7 @@ app.post("/authorize", async (c) => {
 			return c.text("Invalid state data", 400);
 		}
 
-		if (!state.oauthReqInfo || !state.oauthReqInfo.clientId) {
+		if (!state.oauthReqInfo?.clientId) {
 			return c.text("Invalid request", 400);
 		}
 
@@ -111,12 +112,13 @@ app.post("/authorize", async (c) => {
 		headers.append("Set-Cookie", sessionBindingCookie);
 
 		return redirectToSpotify(c, stateToken, Object.fromEntries(headers));
-	} catch (error: any) {
+	} catch (error) {
 		console.error("POST /authorize error:", error);
 		if (error instanceof OAuthError) {
 			return error.toResponse();
 		}
-		return c.text(`Internal server error: ${error.message}`, 500);
+		const message = error instanceof Error ? error.message : String(error);
+		return c.text(`Internal server error: ${message}`, 500);
 	}
 });
 
@@ -133,7 +135,7 @@ app.get("/callback", async (c) => {
 		const result = await validateOAuthState(c.req.raw, c.env.OAUTH_KV);
 		oauthReqInfo = result.oauthReqInfo;
 		clearSessionCookie = result.clearCookie;
-	} catch (error: any) {
+	} catch (error) {
 		if (error instanceof OAuthError) {
 			return error.toResponse();
 		}
@@ -154,7 +156,7 @@ app.get("/callback", async (c) => {
 		return c.text("Missing authorization code", 400);
 	}
 
-	let tokens;
+	let tokens: Required<SpotifyTokens>;
 	try {
 		tokens = await exchangeCodeForToken({
 			clientId: c.env.SPOTIFY_CLIENT_ID,
@@ -162,9 +164,10 @@ app.get("/callback", async (c) => {
 			code,
 			redirectUri: new URL("/callback", c.req.url).href,
 		});
-	} catch (error: any) {
+	} catch (error) {
 		console.error("Token exchange error:", error);
-		return c.text(`Token exchange failed: ${error.message}`, 500);
+		const message = error instanceof Error ? error.message : String(error);
+		return c.text(`Token exchange failed: ${message}`, 500);
 	}
 
 	// Fetch the user's profile to label the grant.
@@ -178,18 +181,15 @@ app.get("/callback", async (c) => {
 
 	// Gate access to the allowlisted email(s). Reject before issuing any token.
 	if (!isEmailAllowed(me.email, c.env.ALLOWED_EMAILS)) {
-		return c.text(
-			"Access denied: this Spotify account is not authorized to use this server.",
-			403,
-		);
+		return c.text("Access denied: this Spotify account is not authorized to use this server.", 403);
 	}
 
 	const props: Props = {
 		userId: me.id,
 		displayName: me.display_name ?? me.id,
-		email: me.email!,
+		email: me.email ?? "",
 		accessToken: tokens.accessToken,
-		refreshToken: tokens.refreshToken!,
+		refreshToken: tokens.refreshToken,
 		expiresAt: tokens.expiresAt,
 	};
 

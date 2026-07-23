@@ -69,9 +69,7 @@ export function trimTrack(t: Json): Json {
 		name: track?.name ?? null,
 		id: track?.id ?? null,
 		uri: track?.uri ?? null,
-		artists: Array.isArray(track?.artists)
-			? track.artists.map((a: Json) => a?.name ?? null)
-			: null,
+		artists: Array.isArray(track?.artists) ? track.artists.map((a: Json) => a?.name ?? null) : null,
 		album: track?.album?.name ?? null,
 		duration_ms: track?.duration_ms ?? null,
 	};

@@ -2,17 +2,9 @@ import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { McpAgent } from "agents/mcp";
 import { z } from "zod";
+import { clamp, SpotifyClient, toId, toUri, trimPaged, trimPlaylist, trimTrack } from "./spotify";
 import { SpotifyHandler } from "./spotify-handler";
-import {
-	SpotifyClient,
-	clamp,
-	toId,
-	toUri,
-	trimPaged,
-	trimPlaylist,
-	trimTrack,
-} from "./spotify";
-import { isEmailAllowed, refreshSpotifyToken, type Props } from "./utils";
+import { isEmailAllowed, type Props, refreshSpotifyToken } from "./utils";
 
 /** Working token state, persisted in the Durable Object. */
 type State = {
@@ -267,9 +259,7 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 				description: "Add tracks to a playlist, optionally at a specific position",
 				inputSchema: {
 					playlist_id: z.string().describe("Playlist ID or URI"),
-					uris: z
-						.array(z.string())
-						.describe("Track IDs or spotify:track: URIs to add (max 100)"),
+					uris: z.array(z.string()).describe("Track IDs or spotify:track: URIs to add (max 100)"),
 					position: z
 						.number()
 						.int()
@@ -437,7 +427,9 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 				description:
 					"Control playback: play (optionally a specific context/tracks), pause, next, previous. Requires an active Spotify device and Premium.",
 				inputSchema: {
-					action: z.enum(["play", "pause", "next", "previous"]).describe("One of: play, pause, next, previous"),
+					action: z
+						.enum(["play", "pause", "next", "previous"])
+						.describe("One of: play, pause, next, previous"),
 					context_uri: z
 						.string()
 						.optional()
