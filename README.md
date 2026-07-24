@@ -1,9 +1,15 @@
-# spotify-mcp
+# spotify-mcp-next
 
 A **remote** MCP (Model Context Protocol) server for Spotify, running on
 [Cloudflare Workers](https://developers.cloudflare.com/workers/). It lets an AI
-assistant search Spotify and manage your playlists, library and playback —
-including moving tracks around inside playlists.
+assistant search Spotify and manage your playlists, library, queue and playback,
+with token-efficient responses and typed, tested internals.
+
+Forked from [lassejlv/spotify-mcp](https://github.com/lassejlv/spotify-mcp) (auth
+layer + Workers plumbing, MIT) with the tool design and typed endpoint approach of
+[markandeyay/spotify-mcp](https://github.com/markandeyay/spotify-mcp). The Spotify
+client transparently falls back between the restricted (Feb 2026) and legacy API
+shapes per endpoint family, so it works with both old and new Spotify apps.
 
 Auth is handled entirely over the web: the server is its own OAuth provider to
 the MCP client, and performs the Spotify OAuth flow upstream. There is no local
@@ -31,22 +37,20 @@ MCP client ──/mcp──▶ OAuthProvider ──▶ SpotifyMCP (Durable Objec
 
 ## Tools
 
-| Tool | What it does |
+24 tools. Tracks and playlists accept bare IDs or full `spotify:` URIs everywhere.
+
+| Area | Tools |
 |---|---|
-| `get_me` | Current user profile |
-| `search` | Search tracks / albums / artists / playlists |
-| `list_playlists` | Your playlists |
-| `get_playlist_tracks` | Playlist details + tracks with their positions |
-| `create_playlist` | Create a playlist |
-| `update_playlist_details` | Rename / re-describe / change public state |
-| `add_tracks_to_playlist` | Add tracks, optionally at a specific position |
-| `remove_tracks_from_playlist` | Remove tracks |
-| `reorder_playlist_tracks` | Move a track (or range of tracks) to a new position |
-| `unfollow_playlist` | Unfollow / delete a playlist |
-| `get_saved_tracks` / `save_tracks` / `remove_saved_tracks` | Liked-songs library |
-| `get_playback_state` | What's playing, on which device |
-| `control_playback` | play / pause / next / previous (Premium + active device) |
-| `add_to_queue` | Queue a track |
+| Profile | `get_me` |
+| Search & lookups | `search_music` (per-type, paginated), `get_track_details` (batch), `get_artist_details`, `get_album_details` |
+| Playlists | `list_playlists`, `get_playlist` (details + positioned tracks), `create_playlist`, `update_playlist_details`, `add_tracks_to_playlist`, `remove_tracks_from_playlist`, `reorder_playlist`, `unfollow_playlist` |
+| Library | `get_saved_tracks`, `save_tracks`, `remove_saved_tracks` |
+| Playback | `get_playback_state`, `control_playback` (play/pause/next/previous/seek/volume/shuffle/repeat), `get_queue`, `add_to_queue`, `list_devices`, `transfer_playback` |
+| Listening history | `get_recently_played`, `get_top_items` (top artists/tracks by time range) |
+
+All responses are compact, reshaped objects (never raw Spotify JSON), returned as
+both text and `structuredContent`. Errors come back as short actionable sentences
+(re-auth needed, Premium required, no active device, rate limited).
 
 ## Deploy it yourself
 
@@ -61,9 +65,7 @@ Runs on the Cloudflare Workers free tier.
 ### 0. Get the code
 
 ```sh
-git clone https://github.com/lassejlv/spotify-mcp.git
-cd spotify-mcp
-npm install --ignore-scripts   # --ignore-scripts avoids an unused native build (sharp)
+pnpm install
 ```
 
 ### 1. Create a Spotify app
@@ -105,8 +107,12 @@ Optional — restrict who can use the server:
 # Comma-separated allowlist of Spotify account emails. Only these accounts can
 # authorize; everyone else is rejected at the callback (no token issued).
 # Leave unset to allow any Spotify account.
-npx wrangler secret put ALLOWED_EMAILS          # e.g. me@example.com,friend@example.com
+npx wrangler secret put ALLOWED_EMAILS          # e.g. me@example.com,spotify_user_id
 ```
+
+Entries match the Spotify account email **or** user id — newer Spotify apps no
+longer expose the email, so ids keep the allowlist usable there. Note Spotify
+Development Mode separately caps apps at ~5 dashboard-allowlisted users.
 
 ### 4. Deploy
 
@@ -148,10 +154,24 @@ additional Spotify redirect URI for local testing.
 ## Notes
 
 - Tracks and playlists can be referenced by bare ID or full `spotify:` URI in any tool.
-- `reorder_playlist_tracks` uses zero-based positions; call `get_playlist_tracks` first to see current positions.
+- `reorder_playlist` uses zero-based positions; call `get_playlist` first to see current positions.
 - Playback control endpoints require Spotify Premium and an active device.
 - Requested scopes: playlist read/modify (public + private), library read/modify,
   playback read/modify, `user-read-private`, and `user-read-email` (used for the
   `ALLOWED_EMAILS` access gate).
-- Access control: set the `ALLOWED_EMAILS` secret to a comma-separated list to
-  restrict the server to specific Spotify accounts; leave it unset to allow anyone.
+- Access control: set the `ALLOWED_EMAILS` secret to a comma-separated list of
+  emails and/or user ids to restrict the server; leave it unset to allow anyone.
+- `/recommendations`, audio-features and related-artists are dead for third-party
+  apps; `get_top_items` + `get_recently_played` are the measured foundation for
+  building recommendations instead.
+
+## Development
+
+```sh
+pnpm check   # lint (Biome) + typecheck (strict tsc) + tests
+pnpm test    # vitest in workerd via @cloudflare/vitest-pool-workers
+```
+
+Tests run fully offline against a fake Spotify upstream (`src/fake-spotify.ts`),
+including integration tests of the real worker (OAuth discovery, DCR, 401 gating,
+approval dialog).
