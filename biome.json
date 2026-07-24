@@ -17,7 +17,7 @@
 	},
 	"overrides": [
 		{
-			"includes": ["src/index.ts", "src/spotify.ts", "src/workers-oauth-utils.ts"],
+			"includes": ["src/workers-oauth-utils.ts"],
 			"linter": {
 				"rules": {
 					"suspicious": {
