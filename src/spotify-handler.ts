@@ -1,9 +1,10 @@
 import type { AuthRequest, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { Hono } from "hono";
+import { currentUserSchema } from "./types";
 import {
 	exchangeCodeForToken,
 	getUpstreamAuthorizeUrl,
-	isEmailAllowed,
+	isAccountAllowed,
 	type Props,
 	SPOTIFY_SCOPES,
 	type SpotifyTokens,
@@ -177,10 +178,14 @@ app.get("/callback", async (c) => {
 	if (!meResp.ok) {
 		return c.text(`Failed to fetch Spotify profile: ${await meResp.text()}`, 500);
 	}
-	const me = (await meResp.json()) as { id: string; display_name?: string; email?: string };
+	const meParsed = currentUserSchema.safeParse(await meResp.json());
+	if (!meParsed.success) {
+		return c.text("Spotify profile response had an unexpected shape", 500);
+	}
+	const me = meParsed.data;
 
-	// Gate access to the allowlisted email(s). Reject before issuing any token.
-	if (!isEmailAllowed(me.email, c.env.ALLOWED_EMAILS)) {
+	// Gate access to the allowlist (emails or user ids) before issuing any token.
+	if (!isAccountAllowed([me.email, me.id], c.env.ALLOWED_EMAILS)) {
 		return c.text("Access denied: this Spotify account is not authorized to use this server.", 403);
 	}
 

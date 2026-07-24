@@ -11,8 +11,8 @@ import {
 	saveTracks,
 	search,
 } from "./endpoints";
+import { fakeSpotify, type SeenRequest, staticTokens } from "./fake-spotify";
 import { SpotifyClient } from "./spotify";
-import { fakeSpotify, type SeenRequest, staticTokens } from "./spotify.test";
 
 function makeClient(routes: Record<string, (seen: SeenRequest) => Response>) {
 	const fake = fakeSpotify(routes);

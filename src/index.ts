@@ -45,7 +45,7 @@ import {
 	SpotifyClient,
 } from "./spotify";
 import { SpotifyHandler } from "./spotify-handler";
-import { isEmailAllowed, type Props, refreshSpotifyToken } from "./utils";
+import { isAccountAllowed, type Props, refreshSpotifyToken } from "./utils";
 
 /** Working token state, persisted in the Durable Object. */
 type State = {
@@ -157,7 +157,7 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 	async init() {
 		// Backup access gate (primary check is at the OAuth callback). If this
 		// grant's email isn't allowed, register no tools.
-		if (!isEmailAllowed(this.props?.email, this.env.ALLOWED_EMAILS)) {
+		if (!isAccountAllowed([this.props?.email, this.props?.userId], this.env.ALLOWED_EMAILS)) {
 			return;
 		}
 

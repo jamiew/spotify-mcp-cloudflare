@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	exchangeCodeForToken,
 	getUpstreamAuthorizeUrl,
-	isEmailAllowed,
+	isAccountAllowed,
 	refreshSpotifyToken,
 } from "./utils";
 
@@ -27,16 +27,21 @@ function fakeTokenEndpoint(status: number, body: unknown) {
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe("isEmailAllowed", () => {
+describe("isAccountAllowed", () => {
 	it("allows everyone when no list is configured", () => {
-		expect(isEmailAllowed("a@b.com", "")).toBe(true);
-		expect(isEmailAllowed("a@b.com", null)).toBe(true);
+		expect(isAccountAllowed(["a@b.com"], "")).toBe(true);
+		expect(isAccountAllowed(["a@b.com"], null)).toBe(true);
 	});
 
 	it("matches case-insensitively and trims entries", () => {
-		expect(isEmailAllowed("A@B.com", " a@b.com , c@d.com")).toBe(true);
-		expect(isEmailAllowed("x@y.com", "a@b.com")).toBe(false);
-		expect(isEmailAllowed(undefined, "a@b.com")).toBe(false);
+		expect(isAccountAllowed(["A@B.com"], " a@b.com , c@d.com")).toBe(true);
+		expect(isAccountAllowed(["x@y.com"], "a@b.com")).toBe(false);
+		expect(isAccountAllowed([undefined], "a@b.com")).toBe(false);
+	});
+
+	it("matches on user id when email is unavailable (restricted apps)", () => {
+		expect(isAccountAllowed([undefined, "jamiew"], "a@b.com, jamiew")).toBe(true);
+		expect(isAccountAllowed([null, "someone-else"], "jamiew")).toBe(false);
 	});
 });
 

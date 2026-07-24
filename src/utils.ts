@@ -19,14 +19,16 @@ export const SPOTIFY_SCOPES = [
 ].join(" ");
 
 /**
- * Access control by Spotify account email.
+ * Access control by Spotify account.
  *
  * `allowedRaw` is the `ALLOWED_EMAILS` secret: a comma-separated list of
- * permitted emails. If it is empty/unset the server is open to any Spotify
- * account. Anyone not on a configured list is rejected at the OAuth callback.
+ * permitted emails and/or Spotify user ids. Newer Spotify apps no longer see
+ * the account email on /me, so ids keep the allowlist usable there. Empty or
+ * unset means the server is open to any Spotify account. Anyone not on a
+ * configured list is rejected at the OAuth callback.
  */
-export function isEmailAllowed(
-	email: string | undefined | null,
+export function isAccountAllowed(
+	identifiers: (string | undefined | null)[],
 	allowedRaw: string | undefined | null,
 ): boolean {
 	const allow = (allowedRaw ?? "")
@@ -34,7 +36,7 @@ export function isEmailAllowed(
 		.map((e) => e.trim().toLowerCase())
 		.filter(Boolean);
 	if (allow.length === 0) return true; // no restriction configured
-	return !!email && allow.includes(email.toLowerCase());
+	return identifiers.some((id) => !!id && allow.includes(id.toLowerCase()));
 }
 
 /**
