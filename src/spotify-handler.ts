@@ -1,5 +1,6 @@
 import type { AuthRequest, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { Hono } from "hono";
+import { landingPage } from "./landing";
 import { currentUserSchema } from "./types";
 import {
 	exchangeCodeForToken,
@@ -51,6 +52,8 @@ async function redirectToSpotify(
 		},
 	});
 }
+
+app.get("/", (c) => c.html(landingPage(new URL(c.req.url).origin)));
 
 app.get("/authorize", async (c) => {
 	const oauthReqInfo = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);
