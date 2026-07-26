@@ -2,6 +2,10 @@
 
 **Beta.** Followup to my python [spotify-mcp](https://github.com/jamiew/spotify-mcp), rewritten in TypeScript as a **remote** MCP server on [Cloudflare Workers](https://developers.cloudflare.com/workers/) -- auth layer forked from [lassejlv/spotify-mcp](https://github.com/lassejlv/spotify-mcp) (MIT), tool design and typed-endpoint approach borrowed from [markandeyay/spotify-mcp](https://github.com/markandeyay/spotify-mcp). Goal: all the major Spotify API functions as well-designed, token-efficient tools, with a recommendations layer on top (in progress -- Spotify killed `/recommendations` for third-party apps, so we're rebuilding from top-items + recently-played instead).
 
+## Live instance
+
+Deployed at **`https://spotify-mcp-cloudflare.jamie-7e9.workers.dev/mcp`** (Streamable HTTP; legacy SSE at `/sse`). The Spotify API key behind it is registered to MCP author [@jamiew](https://github.com/jamiew) -- Spotify Development Mode caps any app at ~5 dashboard-allowlisted users, so if you want in, deploy your own (below) or open an issue.
+
 Auth is handled entirely over the web: the server is its own OAuth provider to
 the MCP client, and performs the Spotify OAuth flow upstream. There is no local
 binary and no `authenticate` tool -- connecting the server in your MCP client
@@ -21,7 +25,7 @@ shapes per endpoint family, so it works with both old and new Spotify apps.
 - The agent persists a working access token in its Durable Object state and
   **refreshes it automatically** using the stored refresh token.
 
-```
+```text
 MCP client ──/mcp──▶ OAuthProvider ──▶ SpotifyMCP (Durable Object)
      │                    │                     │
    /authorize        /callback            Spotify Web API
@@ -33,7 +37,7 @@ MCP client ──/mcp──▶ OAuthProvider ──▶ SpotifyMCP (Durable Objec
 24 tools. Tracks and playlists accept bare IDs or full `spotify:` URIs everywhere.
 
 | Area | Tools |
-|---|---|
+| --- | --- |
 | Profile | `get_me` |
 | Search & lookups | `search_music` (per-type, paginated), `get_track_details` (batch), `get_artist_details`, `get_album_details` |
 | Playlists | `list_playlists`, `get_playlist` (details + positioned tracks), `create_playlist`, `update_playlist_details`, `add_tracks_to_playlist`, `remove_tracks_from_playlist`, `reorder_playlist`, `unfollow_playlist` |
@@ -67,7 +71,7 @@ At <https://developer.spotify.com/dashboard>, create an app and note the
 **Client ID** and **Client Secret**. Under **Redirect URIs**, add your Worker's
 callback URL:
 
-```
+```text
 https://spotify-mcp-cloudflare.<your-subdomain>.workers.dev/callback
 ```
 

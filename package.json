@@ -15,8 +15,11 @@
 		"format": "biome check --write .",
 		"test": "vitest run",
 		"test:watch": "vitest",
-		"check": "pnpm lint && pnpm type-check && pnpm test",
-		"e2e": "node --experimental-strip-types scripts/e2e.ts"
+		"check": "pnpm lint && pnpm lint:md && pnpm type-check && pnpm check:meta && pnpm test",
+		"e2e": "node --experimental-strip-types scripts/e2e.ts",
+		"check:meta": "node --experimental-strip-types scripts/check-meta.ts",
+		"check:size": "pnpm exec wrangler deploy --dry-run --outdir /tmp/spotify-mcp-size-check 2>&1 | node --experimental-strip-types scripts/check-size.ts",
+		"lint:md": "markdownlint-cli2 \"*.md\""
 	},
 	"dependencies": {
 		"@cloudflare/workers-oauth-provider": "^0.8.1",
@@ -29,6 +32,7 @@
 		"@biomejs/biome": "^2.5.5",
 		"@cloudflare/vitest-pool-workers": "^0.18.7",
 		"@cloudflare/workers-types": "^4.20260628.1",
+		"markdownlint-cli2": "^0.23.1",
 		"typescript": "^5.9.0",
 		"vitest": "^4.1.10",
 		"wrangler": "^4.105.0"
