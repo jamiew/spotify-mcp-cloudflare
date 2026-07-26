@@ -164,9 +164,15 @@ additional Spotify redirect URI for local testing.
 
 ## Development
 
+`pnpm check` runs everything CI runs, so a green local check means a green build:
+
 ```sh
-pnpm check   # lint (Biome) + typecheck (strict tsc) + tests
-pnpm test    # vitest in workerd via @cloudflare/vitest-pool-workers
+pnpm check       # lint + markdownlint + typecheck + meta-lint + tests + size budget + security
+pnpm test        # just the tests (vitest in workerd via @cloudflare/vitest-pool-workers)
+pnpm check:meta  # code<->README tool parity + tool-description token budgets
+pnpm check:size  # worker bundle vs 600 KiB gzip budget
+pnpm check:sec   # gitleaks secret scan + dependency audit (brew install gitleaks)
+pnpm e2e         # live OAuth smoke test against the deployed worker
 ```
 
 Tests run fully offline against a fake Spotify upstream (`src/fake-spotify.ts`),
