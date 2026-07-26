@@ -20,7 +20,8 @@
 		"check:meta": "node --experimental-strip-types scripts/check-meta.ts",
 		"check:size": "pnpm exec wrangler deploy --dry-run --outdir /tmp/spotify-mcp-size-check 2>&1 | node --experimental-strip-types scripts/check-size.ts",
 		"lint:md": "markdownlint-cli2 \"*.md\"",
-		"check:sec": "gitleaks git --no-banner && pnpm audit --prod --audit-level high"
+		"check:sec": "gitleaks git --no-banner && pnpm audit --prod --audit-level high",
+		"ci:local": "bash scripts/ci-local.sh"
 	},
 	"dependencies": {
 		"@cloudflare/workers-oauth-provider": "^0.8.1",
