@@ -94,10 +94,17 @@ function mapError(e: unknown): ToolResult {
 				"Spotify could not find that resource — the ID may be wrong, or Spotify no longer offers this capability to third-party apps.",
 			);
 		}
+		// Spotify's own reason is the only way to tell a bad ID from a missing
+		// scope from a retired endpoint, so never swallow it.
+		const detail = e.reason ? ` Spotify said: ${e.reason}` : "";
 		if (e.status === 403) {
-			return toolError("Spotify refused this action (forbidden). The account may lack access.");
+			return toolError(
+				`Spotify refused this action (forbidden). The account may lack access.${detail}`,
+			);
 		}
-		return toolError(`The request to Spotify failed (HTTP ${e.status}). Try again shortly.`);
+		return toolError(
+			`The request to Spotify failed (HTTP ${e.status}). Try again shortly.${detail}`,
+		);
 	}
 	return toolError(e instanceof Error ? e.message : String(e));
 }

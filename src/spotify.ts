@@ -257,21 +257,31 @@ export class SpotifyClient {
 
 	/** Pulls a machine-readable reason out of an error body. */
 	private async extractReason(response: Response): Promise<string | undefined> {
+		const text = await response.text().catch(() => "");
+		if (text.length === 0) return undefined;
 		try {
-			const body: unknown = await response.json();
+			const body: unknown = JSON.parse(text);
 			if (typeof body === "object" && body !== null && "error" in body) {
 				const err = body.error;
 				if (typeof err === "object" && err !== null) {
 					const reason = "reason" in err && typeof err.reason === "string" ? err.reason : undefined;
 					const message =
 						"message" in err && typeof err.message === "string" ? err.message : undefined;
-					return reason ?? message;
+					if (reason ?? message) return reason ?? message;
+				}
+				// OAuth-style bodies put a string in `error` and detail alongside it.
+				if (typeof err === "string") {
+					const description =
+						"error_description" in body && typeof body.error_description === "string"
+							? body.error_description
+							: undefined;
+					return description ? `${err}: ${description}` : err;
 				}
 			}
-			return undefined;
 		} catch {
-			return undefined;
+			// Not JSON — fall through to the raw body.
 		}
+		return text.slice(0, 200);
 	}
 }
 
