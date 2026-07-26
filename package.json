@@ -15,7 +15,8 @@
 		"format": "biome check --write .",
 		"test": "vitest run",
 		"test:watch": "vitest",
-		"check": "pnpm lint && pnpm type-check && pnpm test"
+		"check": "pnpm lint && pnpm type-check && pnpm test",
+		"e2e": "node --experimental-strip-types scripts/e2e.ts"
 	},
 	"dependencies": {
 		"@cloudflare/workers-oauth-provider": "^0.8.1",
