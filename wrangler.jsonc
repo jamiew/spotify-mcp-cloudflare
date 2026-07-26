@@ -31,6 +31,10 @@
 			}
 		]
 	},
+	"workers_dev": true,
+	// Custom domain: requires the zone to be hosted on Cloudflare (jamiedubs.com
+	// is currently on Namecheap DNS). Uncomment once the zone is on this account.
+	// "routes": [{ "pattern": "spotify-mcp.jamiedubs.com", "custom_domain": true }],
 	"kv_namespaces": [
 		{
 			"binding": "OAUTH_KV",
