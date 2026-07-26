@@ -137,7 +137,12 @@ export class SpotifyClient {
 		} catch (error) {
 			if (
 				error instanceof SpotifyApiError &&
-				(error.status === 404 || error.status === 405 || error.status === 410) &&
+				// 400: the restricted /me/library endpoints reject rather than 404 when
+				// the app is on the legacy regime.
+				(error.status === 400 ||
+					error.status === 404 ||
+					error.status === 405 ||
+					error.status === 410) &&
 				// A 404 naming a playback problem is a real 404, not a regime miss.
 				!isNoActiveDeviceError(error)
 			) {
