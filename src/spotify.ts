@@ -93,7 +93,8 @@ export class SpotifyClient {
 	constructor(options: SpotifyClientOptions) {
 		this.tokenProvider = options.tokenProvider;
 		this.baseUrl = (options.apiBaseUrl ?? SPOTIFY_API_BASE_URL).replace(/\/+$/, "");
-		this.fetchImpl = options.fetchImpl ?? fetch;
+		// Bind: workers' native fetch throws "Illegal invocation" if called as a method.
+		this.fetchImpl = options.fetchImpl ?? fetch.bind(globalThis);
 		this.maxRateLimitRetries = options.maxRateLimitRetries ?? 2;
 		this.maxRetryAfterSeconds = options.maxRetryAfterSeconds ?? 5;
 		this.sleep = options.sleep ?? defaultSleep;
