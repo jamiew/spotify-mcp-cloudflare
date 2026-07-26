@@ -1,20 +1,13 @@
-# spotify-mcp-next
+# spotify-mcp-cloudflare
 
-A **remote** MCP (Model Context Protocol) server for Spotify, running on
-[Cloudflare Workers](https://developers.cloudflare.com/workers/). It lets an AI
-assistant search Spotify and manage your playlists, library, queue and playback,
-with token-efficient responses and typed, tested internals.
-
-Forked from [lassejlv/spotify-mcp](https://github.com/lassejlv/spotify-mcp) (auth
-layer + Workers plumbing, MIT) with the tool design and typed endpoint approach of
-[markandeyay/spotify-mcp](https://github.com/markandeyay/spotify-mcp). The Spotify
-client transparently falls back between the restricted (Feb 2026) and legacy API
-shapes per endpoint family, so it works with both old and new Spotify apps.
+**Beta.** Followup to my python [spotify-mcp](https://github.com/jamiew/spotify-mcp), rewritten in TypeScript as a **remote** MCP server on [Cloudflare Workers](https://developers.cloudflare.com/workers/) -- auth layer forked from [lassejlv/spotify-mcp](https://github.com/lassejlv/spotify-mcp) (MIT), tool design and typed-endpoint approach borrowed from [markandeyay/spotify-mcp](https://github.com/markandeyay/spotify-mcp). Goal: all the major Spotify API functions as well-designed, token-efficient tools, with a recommendations layer on top (in progress -- Spotify killed `/recommendations` for third-party apps, so we're rebuilding from top-items + recently-played instead).
 
 Auth is handled entirely over the web: the server is its own OAuth provider to
 the MCP client, and performs the Spotify OAuth flow upstream. There is no local
-binary and no `authenticate` tool — connecting the server in your MCP client
-opens the Spotify consent screen in your browser.
+binary and no `authenticate` tool -- connecting the server in your MCP client
+opens the Spotify consent screen in your browser. The Spotify client
+transparently falls back between the restricted (Feb 2026) and legacy API
+shapes per endpoint family, so it works with both old and new Spotify apps.
 
 ## Architecture
 
@@ -75,7 +68,7 @@ At <https://developer.spotify.com/dashboard>, create an app and note the
 callback URL:
 
 ```
-https://spotify-mcp.<your-subdomain>.workers.dev/callback
+https://spotify-mcp-cloudflare.<your-subdomain>.workers.dev/callback
 ```
 
 (The workers.dev subdomain is shown after the first `wrangler deploy`. Add the
@@ -120,7 +113,7 @@ Development Mode separately caps apps at ~5 dashboard-allowlisted users.
 npx wrangler deploy
 ```
 
-Your server is now live at `https://spotify-mcp.<your-subdomain>.workers.dev/mcp`.
+Your server is now live at `https://spotify-mcp-cloudflare.<your-subdomain>.workers.dev/mcp`.
 
 ## Connect an MCP client
 
@@ -132,7 +125,7 @@ stdio can bridge via [`mcp-remote`](https://www.npmjs.com/package/mcp-remote):
   "mcpServers": {
     "spotify": {
       "command": "npx",
-      "args": ["mcp-remote", "https://spotify-mcp.<your-subdomain>.workers.dev/mcp"]
+      "args": ["mcp-remote", "https://spotify-mcp-cloudflare.<your-subdomain>.workers.dev/mcp"]
     }
   }
 }

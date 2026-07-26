@@ -8,35 +8,39 @@
  *   COOKIE_ENCRYPTION_KEY  - random string used to sign approval cookies
  */
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "spotify-mcp",
-  "main": "src/index.ts",
-  "compatibility_date": "2025-03-10",
-  "compatibility_flags": ["nodejs_compat"],
-  "migrations": [
-    {
-      "tag": "v1",
-      "new_sqlite_classes": ["SpotifyMCP"]
-    }
-  ],
-  "durable_objects": {
-    "bindings": [
-      {
-        "name": "MCP_OBJECT",
-        "class_name": "SpotifyMCP"
-      }
-    ]
-  },
-  "kv_namespaces": [
-    {
-      "binding": "OAUTH_KV",
-      "id": "25c6e83a32334ac2bc2c98065b15b2a4"
-    }
-  ],
-  "observability": {
-    "enabled": true
-  },
-  "dev": {
-    "port": 8788
-  }
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "spotify-mcp-cloudflare",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-03-10",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": [
+				"SpotifyMCP"
+			]
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "MCP_OBJECT",
+				"class_name": "SpotifyMCP"
+			}
+		]
+	},
+	"kv_namespaces": [
+		{
+			"binding": "OAUTH_KV",
+			"id": "f89b9fa733b0465da718ca3a01fa51a5"
+		}
+	],
+	"observability": {
+		"enabled": true
+	},
+	"dev": {
+		"port": 8788
+	}
 }
