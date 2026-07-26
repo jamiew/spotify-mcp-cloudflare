@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-# Opt-in hook: run the full local CI mirror before every push.
-# Enable with: git config core.hooksPath .githooks
-exec bash scripts/ci-local.sh

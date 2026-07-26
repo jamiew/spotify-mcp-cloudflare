@@ -10,7 +10,7 @@
 		"start": "wrangler dev",
 		"deploy": "wrangler deploy",
 		"cf-typegen": "wrangler types",
-		"type-check": "tsc --noEmit",
+		"type-check": "wrangler types --include-env=false && tsc --noEmit",
 		"lint": "biome check .",
 		"format": "biome check --write .",
 		"test": "vitest run",
@@ -25,18 +25,18 @@
 	},
 	"dependencies": {
 		"@cloudflare/workers-oauth-provider": "^0.8.1",
-		"@modelcontextprotocol/sdk": "^1.26.0",
-		"agents": "^0.17.1",
-		"hono": "^4.12.27",
+		"@modelcontextprotocol/sdk": "^1.29.0",
+		"agents": "^0.19.0",
+		"hono": "^4.12.32",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.5",
-		"@cloudflare/vitest-pool-workers": "^0.18.7",
-		"@cloudflare/workers-types": "^4.20260628.1",
+		"@cloudflare/vitest-pool-workers": "^0.18.8",
 		"markdownlint-cli2": "^0.23.1",
-		"typescript": "^5.9.0",
+		"typescript": "^7.0.2",
 		"vitest": "^4.1.10",
-		"wrangler": "^4.105.0"
-	}
+		"wrangler": "^4.114.0"
+	},
+	"packageManager": "pnpm@11.17.0"
 }
