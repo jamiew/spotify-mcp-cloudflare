@@ -172,3 +172,4 @@ pnpm test    # vitest in workerd via @cloudflare/vitest-pool-workers
 Tests run fully offline against a fake Spotify upstream (`src/fake-spotify.ts`),
 including integration tests of the real worker (OAuth discovery, DCR, 401 gating,
 approval dialog).
+
