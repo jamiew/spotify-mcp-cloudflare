@@ -41,6 +41,9 @@ Auth is standard MCP OAuth &mdash; connecting opens Spotify's consent screen, no
 <a href="https://github.com/jamiew">@jamiew</a>; Spotify Development Mode caps it at
 ~5 allowlisted users. Want your own? It's one <code>wrangler deploy</code> &mdash;
 <a href="https://github.com/jamiew/spotify-mcp-cloudflare">source &amp; instructions on GitHub</a>.</p>
+<p>Spotify breaks its Web API on short notice and publishes no feed for it, so the repo
+ships a <code>/spotify-api-watch</code> agent skill that sweeps the changelog and probes
+this server for silent breakage &mdash; run it weekly to get alerted instead of surprised.</p>
 </body>
 </html>`;
 }
