@@ -7,6 +7,8 @@ export function landingPage(origin: string): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>spotify-mcp-cloudflare</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="/icon.png" type="image/png">
 <style>
       body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; max-width: 42rem;
               margin: 3rem auto; padding: 0 1rem; line-height: 1.6; color: #1a1a1a; background: #fafafa; }
@@ -20,9 +22,11 @@ export function landingPage(origin: string): string {
 </style>
 </head>
 <body>
-<h1>spotify-mcp-cloudflare <span class="beta">beta</span></h1>
+<h1><img src="/icon.svg" alt="" width="28" height="28" style="vertical-align:-5px">
+spotify-mcp-cloudflare <span class="beta">beta</span></h1>
 <p>A remote <a href="https://modelcontextprotocol.io">MCP</a> server for Spotify:
-search, playlists, library, queue and playback as 24 token-efficient tools.
+search, playlists, library, queue and playback as 24 token-efficient tools,
+plus prompts for the things Spotify's API no longer does for you.
 Auth is standard MCP OAuth &mdash; connecting opens Spotify's consent screen, no keys to copy.</p>
 
 <h2>Connect from Claude Code</h2>

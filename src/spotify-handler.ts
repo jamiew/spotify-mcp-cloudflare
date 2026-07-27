@@ -1,5 +1,6 @@
 import type { AuthRequest, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { Hono } from "hono";
+import { ICON_PNG_BASE64, ICON_SVG } from "./icon";
 import { landingPage } from "./landing";
 import { currentUserSchema } from "./types";
 import {
@@ -30,7 +31,7 @@ const SERVER_INFO = {
 	name: "Spotify MCP Server",
 	description:
 		"A remote MCP server that lets an AI assistant search Spotify and manage your playlists, library, and playback.",
-	logo: "https://storage.googleapis.com/pr-newsroom-wp/1/2023/05/Spotify_Primary_Logo_RGB_Green.png",
+	logo: "/icon.svg",
 };
 
 /** Redirects the browser to Spotify's consent screen. */
@@ -54,6 +55,22 @@ async function redirectToSpotify(
 }
 
 app.get("/", (c) => c.html(landingPage(new URL(c.req.url).origin)));
+
+const ICON_HEADERS = { "Cache-Control": "public, max-age=86400" };
+app.get("/icon.svg", (c) =>
+	c.body(ICON_SVG, 200, { ...ICON_HEADERS, "Content-Type": "image/svg+xml" }),
+);
+app.get("/icon.png", (c) =>
+	c.body(
+		Uint8Array.from(atob(ICON_PNG_BASE64), (ch) => ch.charCodeAt(0)),
+		200,
+		{
+			...ICON_HEADERS,
+			"Content-Type": "image/png",
+		},
+	),
+);
+app.get("/favicon.ico", (c) => c.redirect("/icon.svg", 301));
 
 app.get("/authorize", async (c) => {
 	const oauthReqInfo = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);

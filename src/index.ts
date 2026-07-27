@@ -35,6 +35,7 @@ import {
 	unfollowPlaylist,
 	updatePlaylistDetails,
 } from "./endpoints";
+import { ICON_PNG_BASE64, ICON_SVG } from "./icon";
 import {
 	isNoActiveDeviceError,
 	isPremiumRequiredError,
@@ -46,6 +47,25 @@ import {
 } from "./spotify";
 import { SpotifyHandler } from "./spotify-handler";
 import { isAccountAllowed, type Props, refreshSpotifyToken } from "./utils";
+
+// Data URIs rather than URLs on this Worker: the MCP server info is built
+// before any request, so we don't know our own origin, and clients are told to
+// treat cross-origin icons as suspect.
+const ICONS = [
+	{ src: `data:image/png;base64,${ICON_PNG_BASE64}`, mimeType: "image/png", sizes: ["48x48"] },
+	{ src: `data:image/svg+xml;base64,${btoa(ICON_SVG)}`, mimeType: "image/svg+xml", sizes: ["any"] },
+];
+
+// Sent once at initialize. Covers what the tool descriptions can't say
+// individually: how the surface fits together, and which Spotify capabilities
+// are simply gone.
+const INSTRUCTIONS = `Spotify for the signed-in user. Tracks, albums, artists and playlists are accepted as bare IDs or spotify: URIs anywhere.
+
+Start from search_music to turn names into IDs. get_playlist returns zero-based positions, which reorder_playlist and remove_tracks_from_playlist need. Playback tools need Spotify Premium and an open device; if none is active, list_devices then transfer_playback.
+
+Spotify has withdrawn /recommendations, audio-features and related-artists from third-party apps, so there is no recommendation endpoint to call. Build suggestions from get_top_items and get_recently_played plus search_music instead.
+
+Newly created playlists may read back as public even when created private; that is Spotify's reporting, not a failed write.`;
 
 /** Working token state, persisted in the Durable Object. */
 type State = {
@@ -121,10 +141,18 @@ function guard<A>(fn: (args: A) => Promise<ToolResult>): (args: A) => Promise<To
 }
 
 export class SpotifyMCP extends McpAgent<Env, State, Props> {
-	server = new McpServer({
-		name: "spotify-mcp",
-		version: "0.3.0",
-	});
+	server = new McpServer(
+		{
+			name: "spotify-mcp",
+			title: "Spotify",
+			version: "0.3.0",
+			description:
+				"Search Spotify and manage playlists, library and playback for the signed-in user.",
+			websiteUrl: "https://github.com/jamiew/spotify-mcp-cloudflare",
+			icons: ICONS,
+		},
+		{ instructions: INSTRUCTIONS },
+	);
 
 	initialState: State = { accessToken: "", refreshToken: "", expiresAt: 0 };
 
@@ -193,9 +221,11 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"get_me",
 			{
+				title: "Spotify profile",
 				description:
 					"Get the current user's Spotify profile. Some fields (email, country, product) are unavailable for newer Spotify apps.",
 				inputSchema: {},
+				annotations: { readOnlyHint: true, openWorldHint: false },
 			},
 			guard(async () => {
 				const me = await getMe(sp());
@@ -212,6 +242,7 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"search_music",
 			{
+				title: "Search Spotify",
 				description:
 					"Search Spotify for tracks, albums, artists and/or playlists. Returns compact per-type results with names and IDs.",
 				inputSchema: {
@@ -225,6 +256,7 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 						.describe("Item types to search (default: track only)"),
 					limit: z.number().int().min(1).max(50).default(10).describe("Max results per type"),
 				},
+				annotations: { readOnlyHint: true, openWorldHint: true },
 			},
 			guard(async ({ query, types, limit }) => {
 				const res = await search(sp(), query, types as SearchType[], limit);
@@ -240,10 +272,12 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"get_track_details",
 			{
+				title: "Track details",
 				description: "Get details for one or more tracks by ID (max 20).",
 				inputSchema: {
 					ids: z.array(z.string()).min(1).max(20).describe("Track IDs or spotify:track: URIs"),
 				},
+				annotations: { readOnlyHint: true, openWorldHint: true },
 			},
 			guard(async ({ ids }) => {
 				const tracks = [];
@@ -267,9 +301,11 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"get_artist_details",
 			{
+				title: "Artist details",
 				description:
 					"Get details for an artist: name, genres, followers, popularity. (Spotify removed artist top-tracks for third-party apps; use search_music with an artist: filter to find their tracks.)",
 				inputSchema: { id: z.string().describe("Artist ID or spotify:artist: URI") },
+				annotations: { readOnlyHint: true, openWorldHint: true },
 			},
 			guard(async ({ id }) => ok(compactArtist(await getArtist(sp(), id)))),
 		);
@@ -277,8 +313,10 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"get_album_details",
 			{
+				title: "Album details",
 				description: "Get details for an album, including its track list.",
 				inputSchema: { id: z.string().describe("Album ID or spotify:album: URI") },
+				annotations: { readOnlyHint: true, openWorldHint: true },
 			},
 			guard(async ({ id }) => {
 				const album = await getAlbum(sp(), id);
@@ -296,11 +334,13 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"list_playlists",
 			{
+				title: "Your playlists",
 				description: "List the current user's playlists: name, id, track count, owner.",
 				inputSchema: {
 					limit: z.number().int().min(1).max(50).default(20),
 					offset: z.number().int().min(0).default(0),
 				},
+				annotations: { readOnlyHint: true, openWorldHint: false },
 			},
 			guard(async ({ limit, offset }) => {
 				const page = await getMyPlaylists(sp(), { limit, offset });
@@ -315,6 +355,7 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"get_playlist",
 			{
+				title: "Playlist contents",
 				description:
 					"Get a playlist's details and a page of its tracks, with zero-based positions (needed for reordering/removal). Spotify only returns contents for playlists the user owns, collaborates on, or follows.",
 				inputSchema: {
@@ -322,6 +363,7 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 					limit: z.number().int().min(1).max(50).default(50),
 					offset: z.number().int().min(0).default(0).describe("Index of the first track"),
 				},
+				annotations: { readOnlyHint: true, openWorldHint: true },
 			},
 			guard(async ({ playlist_id, limit, offset }) => {
 				const details = await getPlaylist(sp(), playlist_id);
@@ -338,6 +380,7 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"create_playlist",
 			{
+				title: "Create playlist",
 				description: "Create a new playlist for the current user.",
 				inputSchema: {
 					name: z.string().min(1).describe("Name of the new playlist"),
@@ -347,6 +390,12 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 						.boolean()
 						.default(false)
 						.describe("Whether the playlist is collaborative (requires public=false)"),
+				},
+				annotations: {
+					readOnlyHint: false,
+					destructiveHint: false,
+					idempotentHint: false,
+					openWorldHint: false,
 				},
 			},
 			guard(async ({ name, description, public: isPublic, collaborative }) => {
@@ -363,12 +412,19 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"update_playlist_details",
 			{
+				title: "Edit playlist details",
 				description: "Update a playlist's name, description or public state.",
 				inputSchema: {
 					playlist_id: z.string().describe("Playlist ID or URI"),
 					name: z.string().optional().describe("New name"),
 					description: z.string().optional().describe("New description"),
 					public: z.boolean().optional().describe("New public state"),
+				},
+				annotations: {
+					readOnlyHint: false,
+					destructiveHint: true,
+					idempotentHint: true,
+					openWorldHint: false,
 				},
 			},
 			guard(async ({ playlist_id, name, description, public: isPublic }) => {
@@ -387,6 +443,7 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"add_tracks_to_playlist",
 			{
+				title: "Add tracks to playlist",
 				description: "Add tracks to a playlist, optionally at a specific position.",
 				inputSchema: {
 					playlist_id: z.string().describe("Playlist ID or URI"),
@@ -402,6 +459,12 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 						.optional()
 						.describe("Zero-based position to insert at (default: append)"),
 				},
+				annotations: {
+					readOnlyHint: false,
+					destructiveHint: false,
+					idempotentHint: false,
+					openWorldHint: false,
+				},
 			},
 			guard(async ({ playlist_id, uris, position }) => {
 				const fullUris = uris.map((u) => (u.includes(":") ? u : `spotify:track:${u}`));
@@ -413,6 +476,7 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"remove_tracks_from_playlist",
 			{
+				title: "Remove tracks from playlist",
 				description: "Remove all occurrences of the given tracks from a playlist.",
 				inputSchema: {
 					playlist_id: z.string().describe("Playlist ID or URI"),
@@ -421,6 +485,12 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 						.min(1)
 						.max(100)
 						.describe("Track IDs or spotify:track: URIs to remove (all occurrences)"),
+				},
+				annotations: {
+					readOnlyHint: false,
+					destructiveHint: true,
+					idempotentHint: true,
+					openWorldHint: false,
 				},
 			},
 			guard(async ({ playlist_id, uris }) => {
@@ -433,6 +503,7 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"reorder_playlist",
 			{
+				title: "Reorder playlist",
 				description:
 					"Move a track (or a consecutive range) to a different position in a playlist. Use get_playlist first to see current positions.",
 				inputSchema: {
@@ -456,6 +527,12 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 						.default(1)
 						.describe("Number of consecutive tracks to move"),
 				},
+				annotations: {
+					readOnlyHint: false,
+					destructiveHint: true,
+					idempotentHint: false,
+					openWorldHint: false,
+				},
 			},
 			guard(async ({ playlist_id, range_start, insert_before, range_length }) => {
 				const snapshot = await reorderPlaylistTracks(sp(), playlist_id, {
@@ -470,9 +547,16 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"unfollow_playlist",
 			{
+				title: "Unfollow or delete playlist",
 				description:
 					"Unfollow (remove from your library) a playlist. For playlists you own this effectively deletes them.",
 				inputSchema: { playlist_id: z.string().describe("Playlist ID or URI") },
+				annotations: {
+					readOnlyHint: false,
+					destructiveHint: true,
+					idempotentHint: true,
+					openWorldHint: false,
+				},
 			},
 			guard(async ({ playlist_id }) => {
 				await unfollowPlaylist(sp(), playlist_id);
@@ -483,11 +567,13 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"get_saved_tracks",
 			{
+				title: "Liked songs",
 				description: "List the user's saved (liked) tracks.",
 				inputSchema: {
 					limit: z.number().int().min(1).max(50).default(20),
 					offset: z.number().int().min(0).default(0),
 				},
+				annotations: { readOnlyHint: true, openWorldHint: false },
 			},
 			guard(async ({ limit, offset }) => {
 				const page = await getSavedTracks(sp(), { limit, offset });
@@ -505,9 +591,16 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"save_tracks",
 			{
+				title: "Like tracks",
 				description: "Save (like) tracks to the user's library.",
 				inputSchema: {
 					ids: z.array(z.string()).min(1).max(50).describe("Track IDs or spotify:track: URIs"),
+				},
+				annotations: {
+					readOnlyHint: false,
+					destructiveHint: false,
+					idempotentHint: true,
+					openWorldHint: false,
 				},
 			},
 			guard(async ({ ids }) => {
@@ -519,9 +612,16 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"remove_saved_tracks",
 			{
+				title: "Unlike tracks",
 				description: "Remove tracks from the user's saved (liked) tracks.",
 				inputSchema: {
 					ids: z.array(z.string()).min(1).max(50).describe("Track IDs or spotify:track: URIs"),
+				},
+				annotations: {
+					readOnlyHint: false,
+					destructiveHint: true,
+					idempotentHint: true,
+					openWorldHint: false,
 				},
 			},
 			guard(async ({ ids }) => {
@@ -533,9 +633,11 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"get_playback_state",
 			{
+				title: "Now playing",
 				description:
 					"Get the current playback state: playing track, device, progress, shuffle/repeat.",
 				inputSchema: {},
+				annotations: { readOnlyHint: true, openWorldHint: false },
 			},
 			guard(async () => {
 				const state = await getPlaybackState(sp());
@@ -567,6 +669,7 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"control_playback",
 			{
+				title: "Control playback",
 				description:
 					"Control playback: play (optionally a context or tracks), pause, next, previous, seek, volume, shuffle, repeat. Requires an active Spotify device and Premium.",
 				inputSchema: {
@@ -609,6 +712,12 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 						.string()
 						.optional()
 						.describe("Target device ID (default: the currently active device)"),
+				},
+				annotations: {
+					readOnlyHint: false,
+					destructiveHint: false,
+					idempotentHint: false,
+					openWorldHint: false,
 				},
 			},
 			guard(
@@ -661,8 +770,10 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"get_queue",
 			{
+				title: "Playback queue",
 				description: "Get the current playback queue: now playing plus upcoming tracks.",
 				inputSchema: {},
+				annotations: { readOnlyHint: true, openWorldHint: false },
 			},
 			guard(async () => {
 				const q = await getQueue(sp());
@@ -676,10 +787,17 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"add_to_queue",
 			{
+				title: "Queue a track",
 				description: "Add a track to the playback queue.",
 				inputSchema: {
 					uri: z.string().describe("Track ID or spotify:track: URI"),
 					device_id: z.string().optional().describe("Target device ID"),
+				},
+				annotations: {
+					readOnlyHint: false,
+					destructiveHint: false,
+					idempotentHint: false,
+					openWorldHint: false,
 				},
 			},
 			guard(async ({ uri, device_id }) => {
@@ -691,8 +809,10 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"list_devices",
 			{
+				title: "Available devices",
 				description: "List the user's available Spotify devices.",
 				inputSchema: {},
+				annotations: { readOnlyHint: true, openWorldHint: false },
 			},
 			guard(async () => {
 				const devices = await getDevices(sp());
@@ -711,10 +831,17 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"transfer_playback",
 			{
+				title: "Switch device",
 				description: "Transfer playback to a different device (see list_devices).",
 				inputSchema: {
 					device_id: z.string().describe("Target device ID"),
 					play: z.boolean().default(true).describe("Start playing after transfer"),
+				},
+				annotations: {
+					readOnlyHint: false,
+					destructiveHint: false,
+					idempotentHint: true,
+					openWorldHint: false,
 				},
 			},
 			guard(async ({ device_id, play }) => {
@@ -726,8 +853,10 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"get_recently_played",
 			{
+				title: "Recently played",
 				description: "List recently played tracks, most recent first.",
 				inputSchema: { limit: z.number().int().min(1).max(50).default(20) },
+				annotations: { readOnlyHint: true, openWorldHint: false },
 			},
 			guard(async ({ limit }) => {
 				const res = await getRecentlyPlayed(sp(), { limit });
@@ -744,6 +873,7 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		this.server.registerTool(
 			"get_top_items",
 			{
+				title: "Top artists and tracks",
 				description:
 					"Get the user's top artists or tracks over a time range - the measured foundation for taste profiling and recommendations.",
 				inputSchema: {
@@ -754,6 +884,7 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 						.describe("short_term ~4 weeks, medium_term ~6 months, long_term ~years"),
 					limit: z.number().int().min(1).max(50).default(20),
 				},
+				annotations: { readOnlyHint: true, openWorldHint: false },
 			},
 			guard(async ({ type, time_range, limit }) => {
 				if (type === "artists") {
@@ -762,6 +893,85 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 				}
 				const page = await getTopTracks(sp(), { timeRange: time_range, limit });
 				return ok({ tracks: page.items.map(compactTrack) });
+			}),
+		);
+
+		// Prompts carry the workflows that aren't obvious from the tool list —
+		// mostly ways to rebuild what Spotify withdrew from third-party apps.
+		this.server.registerPrompt(
+			"discover_similar",
+			{
+				title: "Find similar artists",
+				description:
+					"Suggest artists similar to one you name, and offer to queue or save what looks good.",
+				argsSchema: { artist: z.string().describe("Artist to find neighbours for") },
+			},
+			({ artist }) => ({
+				messages: [
+					{
+						role: "user",
+						content: {
+							type: "text",
+							text: `Find artists similar to ${artist}.
+
+Spotify's related-artists and /recommendations endpoints are gone for third-party apps, so work it out: get_artist_details for their genres, search_music with genre: and year: filters, and get_top_items to bias toward what I already listen to. Skip anything already in my top artists.
+
+Give me 8-10 artists with one line each on why, plus a representative track. Then ask whether to save them or build a playlist.`,
+						},
+					},
+				],
+			}),
+		);
+
+		this.server.registerPrompt(
+			"taste_profile",
+			{
+				title: "Profile my listening",
+				description: "Summarise listening habits from top items and recent plays.",
+				argsSchema: {
+					time_range: z
+						.string()
+						.optional()
+						.describe("short_term (~4 weeks), medium_term (~6 months) or long_term"),
+				},
+			},
+			({ time_range }) => ({
+				messages: [
+					{
+						role: "user",
+						content: {
+							type: "text",
+							text: `Profile my listening over ${time_range ?? "medium_term"}.
+
+Use get_top_items for both artists and tracks, plus get_recently_played. Tell me the genres and moods that dominate, what has changed lately versus the longer ranges, and two or three blind spots worth exploring. Be specific and skip the flattery.`,
+						},
+					},
+				],
+			}),
+		);
+
+		this.server.registerPrompt(
+			"build_playlist",
+			{
+				title: "Build a playlist",
+				description: "Assemble and create a playlist from a described vibe.",
+				argsSchema: {
+					vibe: z.string().describe("What the playlist is for, e.g. 'rainy sunday morning'"),
+					size: z.string().optional().describe("Number of tracks (default 20)"),
+				},
+			},
+			({ vibe, size }) => ({
+				messages: [
+					{
+						role: "user",
+						content: {
+							type: "text",
+							text: `Build me a playlist for: ${vibe}. Around ${size ?? "20"} tracks.
+
+Draw on get_top_items and get_recently_played so it sounds like me, then search_music to fill the gaps. Show the tracklist and wait for my go-ahead before create_playlist and add_tracks_to_playlist. Create it private unless I say otherwise.`,
+						},
+					},
+				],
 			}),
 		);
 	}

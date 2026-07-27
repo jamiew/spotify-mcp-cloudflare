@@ -1,7 +1,8 @@
 // Meta-lint: keeps code, docs, and the MCP tool surface honest with each other.
 // Run with `pnpm check:meta`. Designed as a guardrail for automated/LLM edits:
-// - every registered tool must be mentioned in README.md
+// - every registered tool and prompt must be mentioned in README.md
 // - README's stated tool count must match the code
+// - every tool must carry MCP behaviour annotations
 // - tool descriptions have a token budget (they're loaded into every client's
 //   context window on connect)
 import { readFileSync } from "node:fs";
@@ -18,15 +19,32 @@ function fail(msg: string) {
 	failures += 1;
 }
 
-// Tool registrations: this.server.registerTool("name", ...)
-const toolNames = [...src.matchAll(/registerTool\(\s*\n?\s*"([a-z_]+)"/g)].map((m) => m[1] ?? "");
+// One chunk per tool: everything from its name to the start of its handler.
+const toolBlocks = [
+	...src.matchAll(/registerTool\(\s*\n?\s*"([a-z_]+)",([\s\S]*?)\n\t\t\tguard\(/g),
+];
+const toolNames = toolBlocks.map((m) => m[1] ?? "");
 if (toolNames.length === 0) fail("found no registerTool calls in src/index.ts (parser broken?)");
 const dupes = toolNames.filter((n, i) => toolNames.indexOf(n) !== i);
 if (dupes.length > 0) fail(`duplicate tool registrations: ${dupes.join(", ")}`);
 
-// Every tool must be documented in the README
-for (const name of toolNames) {
-	if (!readme.includes(`\`${name}\``)) fail(`tool ${name} is not mentioned in README.md`);
+const promptNames = [...src.matchAll(/registerPrompt\(\s*\n?\s*"([a-z_]+)"/g)].map(
+	(m) => m[1] ?? "",
+);
+
+// Every tool and prompt must be documented in the README
+for (const name of [...toolNames, ...promptNames]) {
+	if (!readme.includes(`\`${name}\``)) fail(`${name} is not mentioned in README.md`);
+}
+
+// Behaviour annotations drive client confirmation prompts, so a tool without
+// them silently defaults to "destructive, open world".
+for (const [i, name] of toolNames.entries()) {
+	const block = toolBlocks[i]?.[2] ?? "";
+	if (!block.includes("readOnlyHint")) fail(`tool ${name} has no readOnlyHint annotation`);
+	if (block.includes("readOnlyHint: false") && !block.includes("destructiveHint")) {
+		fail(`writing tool ${name} has no destructiveHint annotation`);
+	}
 }
 
 // README's stated count must match reality
@@ -38,13 +56,11 @@ if (!countClaim) {
 }
 
 // Description token budgets
-const descriptions = [...src.matchAll(/description:\s*\n?\s*"((?:[^"\\]|\\.)*)"/g)].map(
-	(m) => m[1] ?? "",
+const descriptions = toolBlocks.map(
+	(m) => /description:\s*\n?\s*"((?:[^"\\]|\\.)*)"/.exec(m[2] ?? "")?.[1] ?? "",
 );
-if (descriptions.length < toolNames.length) {
-	fail(
-		`found ${descriptions.length} description strings for ${toolNames.length} tools (parser drift?)`,
-	);
+if (descriptions.some((d) => d === "")) {
+	fail("some tools have no parseable description (parser drift?)");
 }
 for (const d of descriptions) {
 	if (d.length > DESCRIPTION_BUDGET_CHARS) {
@@ -57,7 +73,7 @@ if (total > TOTAL_BUDGET_CHARS) {
 }
 
 console.log(
-	`check-meta: ${toolNames.length} tools, ${total} chars of descriptions` +
+	`check-meta: ${toolNames.length} tools, ${promptNames.length} prompts, ${total} chars of descriptions` +
 		(failures ? `, ${failures} failure(s)` : " — all good"),
 );
 process.exit(failures === 0 ? 0 : 1);

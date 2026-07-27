@@ -61,4 +61,15 @@ describe("worker", () => {
 		expect(html).toContain("test-client");
 		expect(html).toContain("csrf_token");
 	});
+
+	it("serves the icon as both svg and png", async () => {
+		const svg = await SELF.fetch("https://example.com/icon.svg");
+		expect(svg.headers.get("content-type")).toContain("image/svg+xml");
+		expect(await svg.text()).toContain("<svg");
+
+		const png = await SELF.fetch("https://example.com/icon.png");
+		expect(png.headers.get("content-type")).toContain("image/png");
+		const bytes = new Uint8Array(await png.arrayBuffer());
+		expect([...bytes.slice(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+	});
 });

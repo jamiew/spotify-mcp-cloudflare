@@ -55,6 +55,19 @@ then explicitly PUT back to false. Our request body is correct
 reporting; there is nothing to fix. When a user asks for a private playlist,
 create it private and tell them to confirm in the Spotify app.
 
+## New tools need annotations
+
+Every tool declares MCP behaviour hints, and `pnpm check:meta` fails without
+them. Get `destructiveHint` right rather than safe-by-default: clients use it to
+decide what to confirm with the user, so marking an additive tool destructive
+trains people to click through the prompts that matter. Destructive means
+overwrites or deletes existing data (`remove_saved_tracks`, `unfollow_playlist`,
+`reorder_playlist`), not merely "writes" (`save_tracks`, `add_to_queue`).
+
+Guidance that applies to the whole surface goes in `INSTRUCTIONS` at the top of
+`src/index.ts`, not into every tool description — it ships once per session
+instead of 24 times, and the descriptions are under a token budget.
+
 ## Before finishing
 
 ```sh

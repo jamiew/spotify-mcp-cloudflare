@@ -19,6 +19,7 @@
 		"e2e": "node --experimental-strip-types scripts/e2e.ts",
 		"api:watch": "node --experimental-strip-types scripts/spotify-api-watch.ts",
 		"check:meta": "node --experimental-strip-types scripts/check-meta.ts",
+		"make:icon": "node --experimental-strip-types scripts/make-icon.ts",
 		"check:size": "pnpm exec wrangler deploy --dry-run --outdir /tmp/spotify-mcp-size-check 2>&1 | node --experimental-strip-types scripts/check-size.ts",
 		"lint:md": "markdownlint-cli2 \"*.md\"",
 		"check:sec": "gitleaks git --no-banner && pnpm audit --prod --audit-level high",

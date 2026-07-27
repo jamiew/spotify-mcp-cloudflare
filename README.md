@@ -49,6 +49,50 @@ All responses are compact, reshaped objects (never raw Spotify JSON), returned a
 both text and `structuredContent`. Errors come back as short actionable sentences
 (re-auth needed, Premium required, no active device, rate limited).
 
+Every tool carries MCP behaviour annotations, so a client can tell reads from
+writes without guessing at names: the 13 read tools are `readOnlyHint`, and each
+write declares whether it's `destructiveHint` (overwrites or deletes, e.g.
+`unfollow_playlist`, `remove_saved_tracks`) or merely additive
+(`add_tracks_to_playlist`, `save_tracks`), plus whether repeating the call
+changes anything (`idempotentHint`). Clients that gate on annotations will prompt
+before the destructive ones and let reads through. `openWorldHint` is true only
+for the tools that reach the whole Spotify catalog rather than your own account.
+
+## Prompts
+
+Three prompts ship with the server, surfaced by clients as slash commands or
+templates. They exist mainly to carry the workarounds for capabilities Spotify
+withdrew — a model that just sees the tool list will keep reaching for a
+recommendations endpoint that no longer exists.
+
+| Prompt | Args | What it does |
+| --- | --- | --- |
+| `discover_similar` | `artist` | Rebuilds related-artists from genres, search filters and your top artists |
+| `taste_profile` | `time_range` | Summarises listening habits and names blind spots |
+| `build_playlist` | `vibe`, `size` | Drafts a tracklist from your history, confirms, then creates it |
+
+## Discovery metadata
+
+What a client learns about this server before it calls anything:
+
+- **`instructions`** in the initialize result — how the tools fit together, which
+  Spotify capabilities are gone, and the quirks worth knowing (zero-based
+  positions, Premium-only playback). Cheaper than repeating it in 24 tool
+  descriptions.
+- **Icons** on the server info, as `data:` URIs for both PNG and SVG. Data URIs
+  rather than URLs because the server info is built before any request, so the
+  Worker doesn't know its own origin — and the spec tells clients to distrust
+  cross-origin icons. Also served at `/icon.svg` and `/icon.png` for the landing
+  page, the favicon and the OAuth approval dialog.
+- **`title`, `description`, `websiteUrl`** on the server info, and a `title` on
+  every tool, for clients that render a human-readable surface.
+- **OAuth discovery** at `/.well-known/oauth-authorization-server`, plus dynamic
+  client registration at `/register`, so no client needs manual config.
+
+The icon is generated, not hand-drawn — `pnpm make:icon` re-renders
+`src/icon.ts` (SVG plus a hand-encoded PNG, no image dependencies) from the
+shapes at the top of `scripts/make-icon.ts`.
+
 ## Deploy it yourself
 
 Runs on the Cloudflare Workers free tier.
