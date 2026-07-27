@@ -194,6 +194,37 @@ The Feb 2026 changes split apps into a **full/legacy** and a **restricted**
 regime with different endpoint shapes. `src/spotify.ts` falls back between them
 per endpoint family and caches the answer, so both work — see `withFallback`.
 
+## Skills
+
+This repo ships agent skills that keep it current without anyone remembering to
+check. If you run Claude Code here, they're worth trying.
+
+### `/spotify-api-watch`
+
+Answers two questions: **what did Spotify change**, and **does this server still
+work**. It sweeps the changelog (`pnpm api:watch`), classifies each new item as
+breaking / unlocking / irrelevant against the actual code, then runs a live
+conformance probe to detect a silent regime flip — because a clean changelog
+doesn't mean nothing broke.
+
+Run it before a release, when a tool starts failing in a way that smells
+upstream, or on a schedule. It found four unreviewed changelog entries the first
+time it ran, including one that makes our account allowlist key on a field
+Spotify now steers away from.
+
+To run it weekly and get alerted rather than auto-changed, schedule the sweep and
+let its nonzero exit drive the notification. Don't automate `--accept` — that
+marks entries reviewed with nobody reading them.
+
+### Agent instructions
+
+`CLAUDE.md` carries the working rules for agents, most importantly: **this
+repo's test suite can pass while production is entirely broken.** All 42 tests
+were green on 2026-07-26 while every one of the 24 tools was dead, because the
+bugs sat exactly where the suite substitutes a fake. Changes to the Spotify
+client, endpoints or scopes get verified with live MCP calls, not just `pnpm
+test`. Worth reading before your first change here even if you're human.
+
 ## Development
 
 `pnpm check` runs everything CI runs, so a green local check means a green build:
