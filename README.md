@@ -154,13 +154,45 @@ additional Spotify redirect URI for local testing.
 - `reorder_playlist` uses zero-based positions; call `get_playlist` first to see current positions.
 - Playback control endpoints require Spotify Premium and an active device.
 - Requested scopes: playlist read/modify (public + private), library read/modify,
-  playback read/modify, `user-read-private`, and `user-read-email` (used for the
-  `ALLOWED_EMAILS` access gate).
+  playback read/modify, `user-top-read`, `user-read-recently-played`,
+  `user-read-private`, and `user-read-email` (used for the `ALLOWED_EMAILS`
+  access gate). Not requested, and so not implemented: `user-follow-read` /
+  `user-follow-modify` (follow artists), `ugc-image-upload` (playlist cover art),
+  `user-read-playback-position` (podcast/audiobook resume).
 - Access control: set the `ALLOWED_EMAILS` secret to a comma-separated list of
   emails and/or user ids to restrict the server; leave it unset to allow anyone.
 - `/recommendations`, audio-features and related-artists are dead for third-party
   apps; `get_top_items` + `get_recently_played` are the measured foundation for
   building recommendations instead.
+
+## Tracking Spotify API changes
+
+Spotify ships breaking changes to the Web API with little notice, and publishes
+**no RSS feed and no changelog index**. Entries live at predictable per-month
+URLs that 404 until they exist, so the only reliable way to notice one is to
+probe the month space:
+
+```sh
+pnpm api:watch            # exits 1 if there are unreviewed changelog entries
+pnpm api:watch --accept   # record them as reviewed (only after actually reading them)
+```
+
+Reviewed entries are recorded in `scripts/spotify-api-seen.json`. The
+`spotify-api-watch` skill wraps this with impact analysis and a live conformance
+probe — run it before a release, or on a schedule to get alerted.
+
+Where changes surface, in the order they usually appear:
+
+| Source | Notes |
+| --- | --- |
+| [Developer community forum](https://community.spotify.com/t5/Spotify-for-Developers/bd-p/Spotify_Developer) | Undocumented breakage shows up here first, often days early |
+| Changelog `.../references/changes/<month>-<year>` | Authoritative but after the fact; no index page |
+| [Feb 2026 migration guide](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide) | The regime split this server's fallback logic exists for |
+| [Official TS SDK](https://github.com/spotify/spotify-web-api-ts-sdk) issues | We don't depend on it, but its bug reports are an early signal |
+
+The Feb 2026 changes split apps into a **full/legacy** and a **restricted**
+regime with different endpoint shapes. `src/spotify.ts` falls back between them
+per endpoint family and caches the answer, so both work — see `withFallback`.
 
 ## Development
 
@@ -173,6 +205,7 @@ pnpm check:meta  # code<->README tool parity + tool-description token budgets
 pnpm check:size  # worker bundle vs 600 KiB gzip budget
 pnpm check:sec   # gitleaks secret scan + dependency audit (brew install gitleaks)
 pnpm e2e         # live OAuth smoke test against the deployed worker
+pnpm api:watch   # check for unreviewed Spotify Web API changelog entries
 ```
 
 Tests run fully offline against a fake Spotify upstream (`src/fake-spotify.ts`),
