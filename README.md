@@ -99,9 +99,12 @@ Runs on the Cloudflare Workers free tier.
 
 ### Prerequisites
 
-- A [Cloudflare account](https://dash.cloudflare.com/sign-up) and the Wrangler CLI logged in (`npx wrangler login`).
+- A [Cloudflare account](https://dash.cloudflare.com/sign-up); you'll log in with
+  `pnpm wrangler login` once dependencies are installed.
 - A [Spotify Developer](https://developer.spotify.com/dashboard) account.
-- Node.js 18+.
+- Node.js 18+ and [pnpm](https://pnpm.io) (`corepack enable` if you don't have it).
+  Wrangler is a local dependency, so every command here runs through pnpm rather
+  than a globally installed CLI.
 
 ### 0. Get the code
 
@@ -127,7 +130,7 @@ URI, then deploy again if needed. A custom domain's `/callback` works too.)
 The OAuth provider stores grants, tokens and clients in KV.
 
 ```sh
-npx wrangler kv namespace create OAUTH_KV
+pnpm wrangler kv namespace create OAUTH_KV
 ```
 
 Copy the returned `id` into `wrangler.jsonc`, replacing the existing `OAUTH_KV`
@@ -137,9 +140,9 @@ work for you).
 ### 3. Set secrets
 
 ```sh
-npx wrangler secret put SPOTIFY_CLIENT_ID       # your Spotify Client ID
-npx wrangler secret put SPOTIFY_CLIENT_SECRET   # your Spotify Client Secret
-npx wrangler secret put COOKIE_ENCRYPTION_KEY   # any random string, e.g. `openssl rand -hex 32`
+pnpm wrangler secret put SPOTIFY_CLIENT_ID       # your Spotify Client ID
+pnpm wrangler secret put SPOTIFY_CLIENT_SECRET   # your Spotify Client Secret
+pnpm wrangler secret put COOKIE_ENCRYPTION_KEY   # any random string, e.g. `openssl rand -hex 32`
 ```
 
 Optional — restrict who can use the server:
@@ -148,7 +151,7 @@ Optional — restrict who can use the server:
 # Comma-separated allowlist of Spotify account emails. Only these accounts can
 # authorize; everyone else is rejected at the callback (no token issued).
 # Leave unset to allow any Spotify account.
-npx wrangler secret put ALLOWED_EMAILS          # e.g. me@example.com,spotify_user_id
+pnpm wrangler secret put ALLOWED_EMAILS          # e.g. me@example.com,spotify_user_id
 ```
 
 Entries match the Spotify account email **or** user id — newer Spotify apps no
@@ -158,7 +161,7 @@ Development Mode separately caps apps at ~5 dashboard-allowlisted users.
 ### 4. Deploy
 
 ```sh
-npx wrangler deploy
+pnpm run deploy
 ```
 
 Your server is now live at `https://spotify-mcp-cloudflare.<your-subdomain>.workers.dev/mcp`.
@@ -186,7 +189,7 @@ grant Spotify access. Tokens are refreshed automatically thereafter.
 
 ```sh
 cp .dev.vars.example .dev.vars   # then fill in the three values
-npx wrangler dev
+pnpm dev
 ```
 
 `wrangler dev` simulates KV locally. Use `http://localhost:8788/callback` as an

@@ -2,7 +2,7 @@
  * Wrangler config for the Spotify remote MCP server.
  * https://developers.cloudflare.com/workers/wrangler/configuration/
  *
- * Secrets (set with `npx wrangler secret put <NAME>`):
+ * Secrets (set with `pnpm wrangler secret put <NAME>`):
  *   SPOTIFY_CLIENT_ID      - your Spotify app's Client ID
  *   SPOTIFY_CLIENT_SECRET  - your Spotify app's Client Secret
  *   COOKIE_ENCRYPTION_KEY  - random string used to sign approval cookies
