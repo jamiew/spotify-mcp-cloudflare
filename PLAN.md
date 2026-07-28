@@ -26,14 +26,18 @@ The lesson worth keeping: all three functional bugs lived exactly where the suit
 - [x] Phase 3 — tool surface: 24 tools, compact mappers, friendly error mapping, tests per group
 - [x] Phase 4 — auth hardening: refresh dedup, `invalid_grant` → re-auth message, allowlist by email-or-id, zod-parsed callback profile, worker integration tests (discovery/DCR/401/approval)
 - [x] Phase 5 — 2026 API survival: per-family restricted⇄legacy fallback with session caching (subsumes regime detection; capability-degradation registry deemed unnecessary — fallback + friendly 404 message covers it)
-- [ ] Phase 6 — recommendations v2 (insight-driven, since `/recommendations` is gone): `get_top_items` + `get_recently_played` landed as the measured foundation; `recommend_tracks`/summarize tools still to design
+- [ ] Phase 6 — recommendations v2 ([#7](https://github.com/jamiew/spotify-mcp-cloudflare/issues/7), insight-driven since `/recommendations` is gone): `get_top_items` + `get_recently_played` landed as the measured foundation; the `discover_similar` prompt is the stopgap; `recommend_tracks` still to design
 - [x] Phase 7 — deployed: <https://spotify-mcp-cloudflare.jamie-7e9.workers.dev/mcp> (jamie's Spotify app + KV + secrets). Custom domain deferred: jamiedubs.com DNS is on Namecheap, route stashed in wrangler.jsonc. `scripts/e2e.ts` (pnpm e2e) does the live OAuth smoke test — jamie to finish the browser approval
 - [x] CI hardening: gitleaks + pnpm audit (security job), check:meta (code<->README tool parity + description token budgets), check:size (600 KiB gzip cap), markdownlint; deploy job needs all three + DEPLOY_ENABLED repo var + CLOUDFLARE_API_TOKEN secret (both still to set)
 - [x] Rename to `spotify-mcp-cloudflare`, public repo at <https://github.com/jamiew/spotify-mcp-cloudflare> (created; push pending confirmation)
 - [ ] Optional: elicitation gating for destructive ops (unfollow_playlist, remove_*) — partly moot now that those tools declare `destructiveHint`, which is what clients gate on; only worth it for clients that ignore annotations
-- [ ] Optional: publish to the MCP registry (`server.json` + `mcp-publisher`) — the last real discoverability gap
-- [ ] Live smoke test in CI — point `scripts/e2e.ts` at the deployed Worker and run it on a schedule; the fake-upstream suite structurally cannot catch the bug class found on 2026-07-26
-- [ ] Verify `add_to_queue` / `control_playback` / `transfer_playback` against a real active device
+- [ ] Optional: publish to the MCP registry ([#5](https://github.com/jamiew/spotify-mcp-cloudflare/issues/5)) — the last real discoverability gap
+- [ ] Live smoke test in CI ([#4](https://github.com/jamiew/spotify-mcp-cloudflare/issues/4)) — point `scripts/e2e.ts` at the deployed Worker and run it on a schedule; the fake-upstream suite structurally cannot catch the bug class found on 2026-07-26
+- [ ] Verify `add_to_queue` / `control_playback` / `transfer_playback` against a real active device ([#6](https://github.com/jamiew/spotify-mcp-cloudflare/issues/6))
+- [ ] Don't retry 429s carrying `QUOTA_EXCEEDED` ([#2](https://github.com/jamiew/spotify-mcp-cloudflare/issues/2)) — quota is counted per developer account since July 2026, so retries burn every app's pool
+- [ ] Accept `account_id` in the allowlist ([#3](https://github.com/jamiew/spotify-mcp-cloudflare/issues/3))
+- [ ] Use `127.0.0.1`, not `localhost`, in the local redirect-URI docs ([#8](https://github.com/jamiew/spotify-mcp-cloudflare/issues/8))
+- [ ] Public multi-user hosting is capped by Spotify at 5 users/app ([#1](https://github.com/jamiew/spotify-mcp-cloudflare/issues/1)) — recorded as a constraint, not a task; self-hosting is the answer
 
 ## Phase 0 — Scaffold ✅
 
