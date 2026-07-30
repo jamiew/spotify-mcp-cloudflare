@@ -11,9 +11,13 @@ import {
 	compactTrack,
 	controlPlayback,
 	createPlaylist,
+	followArtists,
+	followPlaylist,
 	getAlbum,
 	getArtist,
+	getArtistAlbums,
 	getDevices,
+	getFollowedArtists,
 	getMe,
 	getMyPlaylists,
 	getPlaybackState,
@@ -21,17 +25,22 @@ import {
 	getPlaylistTracks,
 	getQueue,
 	getRecentlyPlayed,
+	getSavedAlbums,
 	getSavedTracks,
 	getTopArtists,
 	getTopTracks,
 	getTrack,
 	removePlaylistTracks,
+	removeSavedAlbums,
 	removeSavedTracks,
 	reorderPlaylistTracks,
 	type SearchType,
+	saveAlbums,
 	saveTracks,
 	search,
+	setPlaylistCover,
 	transferPlayback,
+	unfollowArtists,
 	unfollowPlaylist,
 	updatePlaylistDetails,
 } from "./endpoints";
@@ -62,6 +71,10 @@ const ICONS = [
 const INSTRUCTIONS = `Spotify for the signed-in user. Tracks, albums, artists and playlists are accepted as bare IDs or spotify: URIs anywhere.
 
 Start from search_music to turn names into IDs. get_playlist returns zero-based positions, which reorder_playlist and remove_tracks_from_playlist need. Playback tools need Spotify Premium and an open device; if none is active, list_devices then transfer_playback.
+
+The library splits by kind. Tracks: get_saved_tracks, save_tracks, remove_saved_tracks. Albums: get_saved_albums, save_albums, remove_saved_albums. Artists are followed rather than saved: get_followed_artists, follow_artists, unfollow_artists. Playlists too: follow_playlist, unfollow_playlist — and unfollowing one you own is how Spotify deletes it.
+
+For an artist, get_artist_details is the profile and get_artist_albums is the discography; Spotify no longer offers their top tracks, so use search_music with an artist: filter for those. set_playlist_cover replaces a playlist's artwork from a URL, which must serve a JPEG of at most 256 KB.
 
 Spotify has withdrawn /recommendations, audio-features and related-artists from third-party apps, so there is no recommendation endpoint to call. Build suggestions from get_top_items and get_recently_played plus search_music instead.
 
@@ -127,6 +140,39 @@ function mapError(e: unknown): ToolResult {
 		);
 	}
 	return toolError(e instanceof Error ? e.message : String(e));
+}
+
+/** Spotify's documented cap, counted against the base64 payload rather than the file. */
+const COVER_MAX_BASE64_CHARS = 256 * 1024;
+
+/**
+ * Cover art goes up as base64, which no model can plausibly emit as a tool
+ * argument, so the tool takes a URL and the Worker does the encoding.
+ */
+async function fetchCoverAsBase64(url: string): Promise<string> {
+	const response = await fetch(url);
+	if (!response.ok) {
+		throw new Error(`Could not fetch that image (HTTP ${response.status}).`);
+	}
+	const contentType = response.headers.get("Content-Type") ?? "";
+	if (!contentType.startsWith("image/jpeg")) {
+		throw new Error(
+			`Spotify only accepts JPEG cover art, but that URL served "${contentType || "an unknown type"}".`,
+		);
+	}
+	const bytes = new Uint8Array(await response.arrayBuffer());
+	// Chunked: spreading 256 KB of bytes into String.fromCharCode blows the stack.
+	let binary = "";
+	for (let i = 0; i < bytes.length; i += 0x8000) {
+		binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+	}
+	const base64 = btoa(binary);
+	if (base64.length > COVER_MAX_BASE64_CHARS) {
+		throw new Error(
+			`That image is too big: Spotify caps covers at 256 KB encoded, this one is ${Math.round(base64.length / 1024)} KB.`,
+		);
+	}
+	return base64;
 }
 
 /** Wraps a tool handler so thrown errors become friendly MCP error results. */
@@ -308,6 +354,33 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 				annotations: { readOnlyHint: true, openWorldHint: true },
 			},
 			guard(async ({ id }) => ok(compactArtist(await getArtist(sp(), id)))),
+		);
+
+		this.server.registerTool(
+			"get_artist_albums",
+			{
+				title: "Artist discography",
+				description:
+					"List an artist's albums, newest first by default. Filter by group to separate studio albums from singles, compilations or guest appearances.",
+				inputSchema: {
+					id: z.string().describe("Artist ID or spotify:artist: URI"),
+					include_groups: z
+						.array(z.enum(["album", "single", "appears_on", "compilation"]))
+						.optional()
+						.describe("Release types to include (default: all)"),
+					limit: z.number().int().min(1).max(50).default(20),
+					offset: z.number().int().min(0).default(0),
+				},
+				annotations: { readOnlyHint: true, openWorldHint: true },
+			},
+			guard(async ({ id, include_groups, limit, offset }) => {
+				const page = await getArtistAlbums(sp(), id, {
+					...(include_groups ? { includeGroups: include_groups } : {}),
+					limit,
+					offset,
+				});
+				return ok({ total: page.total, offset, albums: page.items.map(compactAlbum) });
+			}),
 		);
 
 		this.server.registerTool(
@@ -545,6 +618,51 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		);
 
 		this.server.registerTool(
+			"set_playlist_cover",
+			{
+				title: "Set playlist cover art",
+				description:
+					"Replace a playlist's cover image. Takes an https URL serving a JPEG of at most 256 KB; PNGs and larger images are rejected by Spotify.",
+				inputSchema: {
+					playlist_id: z.string().describe("Playlist ID or URI"),
+					image_url: z.string().describe("https URL of a JPEG image, 256 KB or smaller"),
+				},
+				annotations: {
+					readOnlyHint: false,
+					destructiveHint: true,
+					idempotentHint: true,
+					openWorldHint: true,
+				},
+			},
+			guard(async ({ playlist_id, image_url }) => {
+				if (!image_url.startsWith("https://")) {
+					return toolError("image_url must be an https URL.");
+				}
+				await setPlaylistCover(sp(), playlist_id, await fetchCoverAsBase64(image_url));
+				return okText("Cover art updated. Spotify can take a minute to show it everywhere.");
+			}),
+		);
+
+		this.server.registerTool(
+			"follow_playlist",
+			{
+				title: "Follow playlist",
+				description: "Follow a playlist, adding it to the user's library.",
+				inputSchema: { playlist_id: z.string().describe("Playlist ID or URI") },
+				annotations: {
+					readOnlyHint: false,
+					destructiveHint: false,
+					idempotentHint: true,
+					openWorldHint: false,
+				},
+			},
+			guard(async ({ playlist_id }) => {
+				await followPlaylist(sp(), playlist_id);
+				return okText("Playlist followed.");
+			}),
+		);
+
+		this.server.registerTool(
 			"unfollow_playlist",
 			{
 				title: "Unfollow or delete playlist",
@@ -627,6 +745,128 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 			guard(async ({ ids }) => {
 				await removeSavedTracks(sp(), ids);
 				return okText(`Removed ${ids.length} track(s).`);
+			}),
+		);
+
+		this.server.registerTool(
+			"get_saved_albums",
+			{
+				title: "Saved albums",
+				description: "List the albums saved to the user's library.",
+				inputSchema: {
+					limit: z.number().int().min(1).max(50).default(20),
+					offset: z.number().int().min(0).default(0),
+				},
+				annotations: { readOnlyHint: true, openWorldHint: false },
+			},
+			guard(async ({ limit, offset }) => {
+				const page = await getSavedAlbums(sp(), { limit, offset });
+				return ok({
+					total: page.total,
+					offset,
+					albums: page.albums.map((a, i) => ({
+						...compactAlbum(a),
+						...(page.addedAt[i] ? { added_at: page.addedAt[i] } : {}),
+					})),
+				});
+			}),
+		);
+
+		this.server.registerTool(
+			"save_albums",
+			{
+				title: "Save albums",
+				description: "Save albums to the user's library.",
+				inputSchema: {
+					ids: z.array(z.string()).min(1).max(50).describe("Album IDs or spotify:album: URIs"),
+				},
+				annotations: {
+					readOnlyHint: false,
+					destructiveHint: false,
+					idempotentHint: true,
+					openWorldHint: false,
+				},
+			},
+			guard(async ({ ids }) => {
+				await saveAlbums(sp(), ids);
+				return okText(`Saved ${ids.length} album(s).`);
+			}),
+		);
+
+		this.server.registerTool(
+			"remove_saved_albums",
+			{
+				title: "Remove saved albums",
+				description: "Remove albums from the user's library.",
+				inputSchema: {
+					ids: z.array(z.string()).min(1).max(50).describe("Album IDs or spotify:album: URIs"),
+				},
+				annotations: {
+					readOnlyHint: false,
+					destructiveHint: true,
+					idempotentHint: true,
+					openWorldHint: false,
+				},
+			},
+			guard(async ({ ids }) => {
+				await removeSavedAlbums(sp(), ids);
+				return okText(`Removed ${ids.length} album(s).`);
+			}),
+		);
+
+		this.server.registerTool(
+			"get_followed_artists",
+			{
+				title: "Followed artists",
+				description: "List the artists the user follows.",
+				inputSchema: { limit: z.number().int().min(1).max(50).default(20) },
+				annotations: { readOnlyHint: true, openWorldHint: false },
+			},
+			guard(async ({ limit }) => {
+				const page = await getFollowedArtists(sp(), { limit });
+				return ok({ total: page.total, artists: page.items.map(compactArtist) });
+			}),
+		);
+
+		this.server.registerTool(
+			"follow_artists",
+			{
+				title: "Follow artists",
+				description: "Follow artists on behalf of the user.",
+				inputSchema: {
+					ids: z.array(z.string()).min(1).max(50).describe("Artist IDs or spotify:artist: URIs"),
+				},
+				annotations: {
+					readOnlyHint: false,
+					destructiveHint: false,
+					idempotentHint: true,
+					openWorldHint: false,
+				},
+			},
+			guard(async ({ ids }) => {
+				await followArtists(sp(), ids);
+				return okText(`Followed ${ids.length} artist(s).`);
+			}),
+		);
+
+		this.server.registerTool(
+			"unfollow_artists",
+			{
+				title: "Unfollow artists",
+				description: "Stop following artists.",
+				inputSchema: {
+					ids: z.array(z.string()).min(1).max(50).describe("Artist IDs or spotify:artist: URIs"),
+				},
+				annotations: {
+					readOnlyHint: false,
+					destructiveHint: true,
+					idempotentHint: true,
+					openWorldHint: false,
+				},
+			},
+			guard(async ({ ids }) => {
+				await unfollowArtists(sp(), ids);
+				return okText(`Unfollowed ${ids.length} artist(s).`);
 			}),
 		);
 

@@ -107,6 +107,16 @@ export const savedTrackSchema = z.object({
 	track: trackSchema.nullish(),
 });
 
+// Restricted renames `album` to `item`, the same way it does for saved tracks.
+export const savedAlbumSchema = z.object({
+	added_at: z.string().nullish(),
+	item: simplifiedAlbumSchema.nullish(),
+	album: simplifiedAlbumSchema.nullish(),
+});
+
+// GET /me/following nests its page under `artists` and pages by cursor, not offset.
+export const followedArtistsSchema = z.object({ artists: pagingSchema(artistSchema) });
+
 export const deviceSchema = z.object({
 	id: z.string().nullish(),
 	is_active: z.boolean(),

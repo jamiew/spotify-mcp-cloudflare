@@ -7,7 +7,16 @@ export interface SeenRequest {
 	path: string;
 	query: URLSearchParams;
 	body: unknown;
+	contentType: string | null;
 	token: string | null;
+}
+
+function parseBody(text: string): unknown {
+	try {
+		return JSON.parse(text);
+	} catch {
+		return text;
+	}
 }
 
 export function fakeSpotify(routes: Record<string, (seen: SeenRequest) => Response>) {
@@ -20,7 +29,9 @@ export function fakeSpotify(routes: Record<string, (seen: SeenRequest) => Respon
 			method: req.method,
 			path: url.pathname,
 			query: url.searchParams,
-			body: bodyText ? JSON.parse(bodyText) : undefined,
+			// Not every body is JSON — the cover upload posts base64 under image/jpeg.
+			body: bodyText ? parseBody(bodyText) : undefined,
+			contentType: req.headers.get("Content-Type"),
 			token: req.headers.get("Authorization")?.replace("Bearer ", "") ?? null,
 		};
 		seen.push(record);

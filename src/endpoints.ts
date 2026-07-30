@@ -3,7 +3,7 @@
 // things. Dead endpoints (recommendations, audio-features, audio-analysis,
 // batch /tracks?ids=) are deliberately not exposed.
 
-import { z } from "zod";
+import type { z } from "zod";
 import { type SpotifyClient, toId, toUri } from "./spotify";
 import {
 	type Album,
@@ -14,6 +14,7 @@ import {
 	currentUserSchema,
 	type Device,
 	devicesResponseSchema,
+	followedArtistsSchema,
 	type PlaybackState,
 	type Playlist,
 	pagingSchema,
@@ -23,8 +24,10 @@ import {
 	queueSchema,
 	recentlyPlayedSchema,
 	type SimplifiedAlbum,
+	savedAlbumSchema,
 	savedTrackSchema,
 	searchResponseSchema,
+	simplifiedAlbumSchema,
 	snapshotSchema,
 	type Track,
 	trackSchema,
@@ -115,6 +118,29 @@ export function getArtist(client: SpotifyClient, id: string): Promise<Artist> {
 
 export function getAlbum(client: SpotifyClient, id: string): Promise<Album> {
 	return client.request(`/albums/${encodeURIComponent(toId(id))}`, albumSchema);
+}
+
+export type AlbumGroup = "album" | "single" | "appears_on" | "compilation";
+
+export async function getArtistAlbums(
+	client: SpotifyClient,
+	id: string,
+	options: { includeGroups?: AlbumGroup[]; limit?: number; offset?: number } = {},
+): Promise<{ items: SimplifiedAlbum[]; total: number | null }> {
+	const page = await client.request(
+		`/artists/${encodeURIComponent(toId(id))}/albums`,
+		pagingSchema(simplifiedAlbumSchema),
+		{
+			query: {
+				limit: options.limit ?? 20,
+				offset: options.offset ?? 0,
+				...(options.includeGroups?.length
+					? { include_groups: options.includeGroups.join(",") }
+					: {}),
+			},
+		},
+	);
+	return { items: page.items, total: page.total ?? null };
 }
 
 export async function getMyPlaylists(
@@ -259,9 +285,51 @@ export async function reorderPlaylistTracks(
 	return res.snapshot_id ?? null;
 }
 
+/** Restricted folded playlist follows into /me/library alongside track and album saves. */
+export function followPlaylist(client: SpotifyClient, id: string): Promise<void> {
+	const pid = toId(id);
+	return client.withFallback(
+		"library-write",
+		() =>
+			client.requestVoid("/me/library", {
+				method: "PUT",
+				body: { uris: [toUri("playlist", pid)] },
+			}),
+		() =>
+			client.requestVoid(`/playlists/${encodeURIComponent(pid)}/followers`, {
+				method: "PUT",
+			}),
+	);
+}
+
 export function unfollowPlaylist(client: SpotifyClient, id: string): Promise<void> {
-	return client.requestVoid(`/playlists/${encodeURIComponent(toId(id))}/followers`, {
-		method: "DELETE",
+	const pid = toId(id);
+	return client.withFallback(
+		"library-write",
+		() =>
+			client.requestVoid("/me/library", {
+				method: "DELETE",
+				body: { uris: [toUri("playlist", pid)] },
+			}),
+		() =>
+			client.requestVoid(`/playlists/${encodeURIComponent(pid)}/followers`, {
+				method: "DELETE",
+			}),
+	);
+}
+
+/**
+ * Spotify wants base64-encoded JPEG as the raw body under image/jpeg, capped at
+ * 256 KB of base64 — the only endpoint here that isn't JSON.
+ */
+export function setPlaylistCover(
+	client: SpotifyClient,
+	id: string,
+	jpegBase64: string,
+): Promise<void> {
+	return client.requestVoid(`/playlists/${encodeURIComponent(toId(id))}/images`, {
+		method: "PUT",
+		raw: { contentType: "image/jpeg", body: jpegBase64 },
 	});
 }
 
@@ -311,19 +379,93 @@ export function removeSavedTracks(client: SpotifyClient, trackIds: string[]): Pr
 	);
 }
 
-const containsSchema = z.array(z.boolean());
+export async function getSavedAlbums(
+	client: SpotifyClient,
+	options: { limit?: number; offset?: number } = {},
+): Promise<{ albums: SimplifiedAlbum[]; addedAt: (string | null)[]; total: number | null }> {
+	const page = await client.request("/me/albums", pagingSchema(savedAlbumSchema), {
+		query: { limit: options.limit ?? 20, offset: options.offset ?? 0 },
+	});
+	const albums: SimplifiedAlbum[] = [];
+	const addedAt: (string | null)[] = [];
+	for (const entry of page.items) {
+		const album = entry.item ?? entry.album;
+		if (album) {
+			albums.push(album);
+			addedAt.push(entry.added_at ?? null);
+		}
+	}
+	return { albums, addedAt, total: page.total ?? null };
+}
 
-export function savedTracksContain(client: SpotifyClient, trackIds: string[]): Promise<boolean[]> {
-	const ids = trackIds.map(toId);
+export function saveAlbums(client: SpotifyClient, albumIds: string[]): Promise<void> {
+	const ids = albumIds.map(toId);
 	return client.withFallback(
-		"library-contains",
+		"library-write",
 		() =>
-			client.request("/me/library/contains", containsSchema, {
-				query: { uris: ids.map((id) => toUri("track", id)).join(",") },
+			client.requestVoid("/me/library", {
+				method: "PUT",
+				body: { uris: ids.map((id) => toUri("album", id)) },
+			}),
+		() => client.requestVoid("/me/albums", { method: "PUT", body: { ids } }),
+	);
+}
+
+export function removeSavedAlbums(client: SpotifyClient, albumIds: string[]): Promise<void> {
+	const ids = albumIds.map(toId);
+	return client.withFallback(
+		"library-write",
+		() =>
+			client.requestVoid("/me/library", {
+				method: "DELETE",
+				body: { uris: ids.map((id) => toUri("album", id)) },
+			}),
+		() => client.requestVoid("/me/albums", { method: "DELETE", body: { ids } }),
+	);
+}
+
+export async function getFollowedArtists(
+	client: SpotifyClient,
+	options: { limit?: number } = {},
+): Promise<{ items: Artist[]; total: number | null }> {
+	const res = await client.request("/me/following", followedArtistsSchema, {
+		query: { type: "artist", limit: options.limit ?? 20 },
+	});
+	return { items: res.artists.items, total: res.artists.total ?? null };
+}
+
+export function followArtists(client: SpotifyClient, artistIds: string[]): Promise<void> {
+	const ids = artistIds.map(toId);
+	return client.withFallback(
+		"library-write",
+		() =>
+			client.requestVoid("/me/library", {
+				method: "PUT",
+				body: { uris: ids.map((id) => toUri("artist", id)) },
 			}),
 		() =>
-			client.request("/me/tracks/contains", containsSchema, {
-				query: { ids: ids.join(",") },
+			client.requestVoid("/me/following", {
+				method: "PUT",
+				query: { type: "artist" },
+				body: { ids },
+			}),
+	);
+}
+
+export function unfollowArtists(client: SpotifyClient, artistIds: string[]): Promise<void> {
+	const ids = artistIds.map(toId);
+	return client.withFallback(
+		"library-write",
+		() =>
+			client.requestVoid("/me/library", {
+				method: "DELETE",
+				body: { uris: ids.map((id) => toUri("artist", id)) },
+			}),
+		() =>
+			client.requestVoid("/me/following", {
+				method: "DELETE",
+				query: { type: "artist" },
+				body: { ids },
 			}),
 	);
 }

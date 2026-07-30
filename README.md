@@ -34,14 +34,15 @@ MCP client ──/mcp──▶ OAuthProvider ──▶ SpotifyMCP (Durable Objec
 
 ## Tools
 
-24 tools. Tracks and playlists accept bare IDs or full `spotify:` URIs everywhere.
+33 tools. Tracks and playlists accept bare IDs or full `spotify:` URIs everywhere.
 
 | Area | Tools |
 | --- | --- |
 | Profile | `get_me` |
-| Search & lookups | `search_music` (per-type, paginated), `get_track_details` (batch), `get_artist_details`, `get_album_details` |
-| Playlists | `list_playlists`, `get_playlist` (details + positioned tracks), `create_playlist`, `update_playlist_details`, `add_tracks_to_playlist`, `remove_tracks_from_playlist`, `reorder_playlist`, `unfollow_playlist` |
-| Library | `get_saved_tracks`, `save_tracks`, `remove_saved_tracks` |
+| Search & lookups | `search_music` (per-type, paginated), `get_track_details` (batch), `get_artist_details`, `get_artist_albums` (discography, filterable by release type), `get_album_details` |
+| Playlists | `list_playlists`, `get_playlist` (details + positioned tracks), `create_playlist`, `update_playlist_details`, `set_playlist_cover`, `add_tracks_to_playlist`, `remove_tracks_from_playlist`, `reorder_playlist`, `follow_playlist`, `unfollow_playlist` |
+| Library | `get_saved_tracks`, `save_tracks`, `remove_saved_tracks`, `get_saved_albums`, `save_albums`, `remove_saved_albums` |
+| Following | `get_followed_artists`, `follow_artists`, `unfollow_artists` |
 | Playback | `get_playback_state`, `control_playback` (play/pause/next/previous/seek/volume/shuffle/repeat), `get_queue`, `add_to_queue`, `list_devices`, `transfer_playback` |
 | Listening history | `get_recently_played`, `get_top_items` (top artists/tracks by time range) |
 
@@ -50,7 +51,7 @@ both text and `structuredContent`. Errors come back as short actionable sentence
 (re-auth needed, Premium required, no active device, rate limited).
 
 Every tool carries MCP behaviour annotations, so a client can tell reads from
-writes without guessing at names: the 13 read tools are `readOnlyHint`, and each
+writes without guessing at names: the 16 read tools are `readOnlyHint`, and each
 write declares whether it's `destructiveHint` (overwrites or deletes, e.g.
 `unfollow_playlist`, `remove_saved_tracks`) or merely additive
 (`add_tracks_to_playlist`, `save_tracks`), plus whether repeating the call
@@ -200,11 +201,16 @@ additional Spotify redirect URI for local testing.
 - Tracks and playlists can be referenced by bare ID or full `spotify:` URI in any tool.
 - `reorder_playlist` uses zero-based positions; call `get_playlist` first to see current positions.
 - Playback control endpoints require Spotify Premium and an active device.
+- `set_playlist_cover` takes an `https` URL rather than image data: Spotify wants
+  base64-encoded JPEG in the request body, which is far too large to pass as a
+  tool argument, so the Worker fetches and encodes it. JPEG only, and Spotify
+  caps the encoded payload at 256 KB.
 - Requested scopes: playlist read/modify (public + private), library read/modify,
-  playback read/modify, `user-top-read`, `user-read-recently-played`,
-  `user-read-private`, and `user-read-email` (used for the `ALLOWED_EMAILS`
-  access gate). Not requested, and so not implemented: `user-follow-read` /
-  `user-follow-modify` (follow artists), `ugc-image-upload` (playlist cover art),
+  follow read/modify, `ugc-image-upload` (playlist cover art), playback
+  read/modify, `user-top-read`, `user-read-recently-played`, `user-read-private`,
+  and `user-read-email` (used for the `ALLOWED_EMAILS` access gate). Adding a
+  scope does not upgrade an existing token — reconnect the server via `/mcp`
+  after one changes. Not requested, and so not implemented:
   `user-read-playback-position` (podcast/audiobook resume).
 - Access control: set the `ALLOWED_EMAILS` secret to a comma-separated list of
   emails and/or user ids to restrict the server; leave it unset to allow anyone.

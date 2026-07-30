@@ -5,11 +5,14 @@ import {
 	compactTrack,
 	controlPlayback,
 	createPlaylist,
+	followArtists,
 	getPlaylistTracks,
+	getSavedAlbums,
 	getSavedTracks,
 	removePlaylistTracks,
 	saveTracks,
 	search,
+	setPlaylistCover,
 } from "./endpoints";
 import { fakeSpotify, type SeenRequest, staticTokens } from "./fake-spotify";
 import { SpotifyClient } from "./spotify";
@@ -213,5 +216,47 @@ describe("compact mappers", () => {
 		const base = { id: "p1", name: "P", owner: { display_name: "Jamie" } };
 		expect(compactPlaylist({ ...base, items: { total: 5 } })).toMatchObject({ track_count: 5 });
 		expect(compactPlaylist({ ...base, tracks: { total: 7 } })).toMatchObject({ track_count: 7 });
+	});
+});
+
+describe("getSavedAlbums", () => {
+	it("normalizes legacy album and restricted item entries", async () => {
+		const { client } = makeClient({
+			"GET /v1/me/albums": () =>
+				Response.json({
+					items: [
+						{ added_at: "2023-01-01", album: { id: "al1", name: "Legacy Shape" } },
+						{ added_at: "2024-01-01", item: { id: "al2", name: "Restricted Shape" } },
+					],
+					total: 2,
+				}),
+		});
+		const res = await getSavedAlbums(client);
+		expect(res.albums.map((a) => a.name)).toEqual(["Legacy Shape", "Restricted Shape"]);
+		expect(res.addedAt).toEqual(["2023-01-01", "2024-01-01"]);
+	});
+});
+
+describe("followArtists", () => {
+	it("PUTs uris to /me/library, falling back to legacy /me/following ids", async () => {
+		const { client, seen } = makeClient({
+			"PUT /v1/me/library": notFound,
+			"PUT /v1/me/following": () => new Response(null, { status: 204 }),
+		});
+		await followArtists(client, ["a1", "spotify:artist:a2"]);
+		expect(seen[0]?.body).toEqual({ uris: ["spotify:artist:a1", "spotify:artist:a2"] });
+		expect(seen[1]?.body).toEqual({ ids: ["a1", "a2"] });
+		expect(seen[1]?.query.get("type")).toBe("artist");
+	});
+});
+
+describe("setPlaylistCover", () => {
+	it("sends the base64 body verbatim as image/jpeg rather than JSON", async () => {
+		const { client, seen } = makeClient({
+			"PUT /v1/playlists/p1/images": () => new Response(null, { status: 202 }),
+		});
+		await setPlaylistCover(client, "spotify:playlist:p1", "/9j/BASE64");
+		expect(seen[0]?.body).toBe("/9j/BASE64");
+		expect(seen[0]?.contentType).toBe("image/jpeg");
 	});
 });

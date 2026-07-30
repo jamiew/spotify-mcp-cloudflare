@@ -66,6 +66,8 @@ export interface RequestSpec {
 	method?: "GET" | "POST" | "PUT" | "DELETE";
 	query?: Record<string, string | number | boolean | undefined>;
 	body?: unknown;
+	/** Sends this verbatim instead of JSON — the playlist cover upload is image/jpeg. */
+	raw?: { contentType: string; body: string };
 }
 
 export interface SpotifyClientOptions {
@@ -237,7 +239,10 @@ export class SpotifyClient {
 	private async send(url: string, token: string, spec: RequestSpec): Promise<Response> {
 		const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
 		let body: string | undefined;
-		if (spec.body !== undefined) {
+		if (spec.raw !== undefined) {
+			headers["Content-Type"] = spec.raw.contentType;
+			body = spec.raw.body;
+		} else if (spec.body !== undefined) {
 			headers["Content-Type"] = "application/json";
 			body = JSON.stringify(spec.body);
 		}
