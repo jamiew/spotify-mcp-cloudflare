@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 
 const src = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
 const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+const pkg = readFileSync(new URL("../package.json", import.meta.url), "utf8");
 
 const DESCRIPTION_BUDGET_CHARS = 300; // per tool
 const TOTAL_BUDGET_CHARS = 5000; // whole tool surface
@@ -53,6 +54,15 @@ if (!countClaim) {
 	fail('README.md no longer states the tool count ("N tools.")');
 } else if (Number(countClaim[1]) !== toolNames.length) {
 	fail(`README claims ${countClaim[1]} tools but code registers ${toolNames.length}`);
+}
+
+// The version clients see must match the package; these drifted once already.
+const pkgVersion = /"version":\s*"([^"]+)"/.exec(pkg)?.[1];
+const srcVersion = /version:\s*"([^"]+)"/.exec(src)?.[1];
+if (!pkgVersion || !srcVersion) {
+	fail("could not read the version from package.json and/or src/index.ts");
+} else if (pkgVersion !== srcVersion) {
+	fail(`package.json is ${pkgVersion} but the MCP server reports ${srcVersion}`);
 }
 
 // Description token budgets

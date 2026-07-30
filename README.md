@@ -23,7 +23,10 @@ shapes per endpoint family, so it works with both old and new Spotify apps.
 - **`SpotifyHandler`** (Hono app) implements `/authorize` and `/callback`, driving
   the Spotify authorization-code flow and showing the consent dialog.
 - The agent persists a working access token in its Durable Object state and
-  **refreshes it automatically** using the stored refresh token.
+  **refreshes it automatically** using the stored refresh token. It also records
+  the scopes that token was granted, and re-seeds from a fresh grant when they
+  change — refreshing alone can only ever return the original scopes, so without
+  that a newly requested scope could never take effect.
 
 ```text
 MCP client ──/mcp──▶ OAuthProvider ──▶ SpotifyMCP (Durable Object)
@@ -78,7 +81,7 @@ What a client learns about this server before it calls anything:
 
 - **`instructions`** in the initialize result — how the tools fit together, which
   Spotify capabilities are gone, and the quirks worth knowing (zero-based
-  positions, Premium-only playback). Cheaper than repeating it in 24 tool
+  positions, Premium-only playback). Cheaper than repeating it in 33 tool
   descriptions.
 - **Icons** on the server info, as `data:` URIs for both PNG and SVG. Data URIs
   rather than URLs because the server info is built before any request, so the
@@ -274,9 +277,12 @@ marks entries reviewed with nobody reading them.
 `CLAUDE.md` carries the working rules for agents, most importantly: **this
 repo's test suite can pass while production is entirely broken.** All 42 tests
 were green on 2026-07-26 while every one of the 24 tools was dead, because the
-bugs sat exactly where the suite substitutes a fake. Changes to the Spotify
-client, endpoints or scopes get verified with live MCP calls, not just `pnpm
-test`. Worth reading before your first change here even if you're human.
+bugs sat exactly where the suite substitutes a fake. It happened again on
+2026-07-30: a green suite and a clean deploy, but re-authorizing couldn't
+actually upgrade the granted scopes, because nothing tests the Durable Object's
+token lifecycle. Changes to the Spotify client, endpoints, scopes or auth get
+verified with live MCP calls, not just `pnpm test`. Worth reading before your
+first change here even if you're human.
 
 ## Development
 
@@ -285,7 +291,7 @@ test`. Worth reading before your first change here even if you're human.
 ```sh
 pnpm check       # lint + markdownlint + typecheck + meta-lint + tests + size budget + security
 pnpm test        # just the tests (vitest in workerd via @cloudflare/vitest-pool-workers)
-pnpm check:meta  # code<->README tool parity + tool-description token budgets
+pnpm check:meta  # code<->README tool parity, version parity, description budgets
 pnpm check:size  # worker bundle vs 600 KiB gzip budget
 pnpm check:sec   # gitleaks secret scan + dependency audit (brew install gitleaks)
 pnpm e2e         # live OAuth smoke test against the deployed worker

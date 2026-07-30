@@ -1,6 +1,6 @@
 {
 	"name": "spotify-mcp-cloudflare",
-	"version": "0.2.0",
+	"version": "0.4.0",
 	"description": "Remote Spotify MCP server on Cloudflare Workers - token-efficient tools, typed + tested",
 	"license": "MIT",
 	"private": true,

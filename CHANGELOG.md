@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-07-30 — 0.4.0
+
+### New tools (24 → 33)
+
+- **Playlist cover art.** `set_playlist_cover` replaces a playlist's artwork. It takes an `https` URL rather than image data: Spotify wants base64-encoded JPEG in the request body, and 256 KB of that is roughly 340,000 characters, which is not something a model can emit as a tool argument. The Worker fetches the URL, rejects anything that isn't `image/jpeg`, encodes it and enforces the cap. This is the only non-JSON request body in the client, hence `RequestSpec.raw`.
+- **Following.** `get_followed_artists`, `follow_artists`, `unfollow_artists`, and `follow_playlist` — which had been missing opposite `unfollow_playlist` since the beginning. `unfollow_playlist` also gained the `/me/library` fallback that the other library writes already had, so it survives a flip to the restricted regime.
+- **Saved albums.** `get_saved_albums`, `save_albums`, `remove_saved_albums`. The library previously covered tracks only.
+- **Artist discography.** `get_artist_albums`, filterable by `album` / `single` / `appears_on` / `compilation`. Spotify withdrew artist top-tracks from third-party apps, so this is the only way left to walk a catalog.
+- Three new scopes come with these: `user-follow-read`, `user-follow-modify` and `ugc-image-upload`.
+
+### A scope change could never take effect
+
+- The Durable Object seeded its token state only when no token was stored, then refreshed that grant forever. Re-authorizing after a scope change did nothing useful: Spotify issued a correctly-scoped grant, the agent ignored it, and a refresh only ever returns the scopes the original token was minted with. Fixed by capturing Spotify's granted `scope` from the token response into the grant `props` and re-seeding whenever it differs from what's stored.
+- A 403 whose reason mentions scope now says to reconnect and re-authorize, instead of the generic "the account may lack access" — that message is what made this take two rounds of live testing to spot.
+- This is the second time a bug has lived exactly where the test suite substitutes a fake. Nothing exercises the Durable Object's token lifecycle.
+
+### Housekeeping
+
+- `package.json` said `0.2.0` while the MCP server reported `0.3.0` to clients. Both are now `0.4.0`, and `check:meta` fails if they ever drift again.
+- Removed `savedTracksContain`, implemented but never registered as a tool.
+- `PLAN.md` records the API surface we found and deliberately skipped — podcasts, audiobooks and chapters, the `contains` family, following users, reading playlist images — each with the reason, plus which of our tools are most likely to break if this app is ever moved to the restricted regime.
+
 ## 2026-07-27
 
 ### MCP protocol surface

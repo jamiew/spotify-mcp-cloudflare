@@ -199,7 +199,7 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		{
 			name: "spotify-mcp",
 			title: "Spotify",
-			version: "0.3.0",
+			version: "0.4.0",
 			description:
 				"Search Spotify and manage playlists, library and playback for the signed-in user.",
 			websiteUrl: "https://github.com/jamiew/spotify-mcp-cloudflare",
