@@ -206,8 +206,9 @@ additional Spotify redirect URI for local testing.
 - Playback control endpoints require Spotify Premium and an active device.
 - `set_playlist_cover` takes an `https` URL rather than image data: Spotify wants
   base64-encoded JPEG in the request body, which is far too large to pass as a
-  tool argument, so the Worker fetches and encodes it. JPEG only, and Spotify
-  caps the encoded payload at 256 KB.
+  tool argument, so the Worker fetches and encodes it. Both limits — JPEG only,
+  and Spotify's 256 KB cap on the encoded payload — are enforced in the Worker
+  before anything is sent, so those errors never appear in Spotify's logs.
 - Requested scopes: playlist read/modify (public + private), library read/modify,
   follow read/modify, `ugc-image-upload` (playlist cover art), playback
   read/modify, `user-top-read`, `user-read-recently-played`, `user-read-private`,

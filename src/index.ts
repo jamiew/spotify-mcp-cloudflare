@@ -639,7 +639,7 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 			{
 				title: "Set playlist cover art",
 				description:
-					"Replace a playlist's cover image. Takes an https URL serving a JPEG of at most 256 KB; PNGs and larger images are rejected by Spotify.",
+					"Replace a playlist's cover image. Takes an https URL serving a JPEG of at most 256 KB; PNGs and oversized images are rejected before upload.",
 				inputSchema: {
 					playlist_id: z.string().describe("Playlist ID or URI"),
 					image_url: z.string().describe("https URL of a JPEG image, 256 KB or smaller"),
