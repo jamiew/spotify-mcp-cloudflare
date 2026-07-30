@@ -56,6 +56,8 @@ export type Props = {
 	refreshToken: string;
 	/** Epoch milliseconds at which `accessToken` expires. */
 	expiresAt: number;
+	/** Scopes this grant was actually minted with, per Spotify's token response. */
+	scope: string;
 };
 
 /** Shape of Spotify's token endpoint JSON response. */
@@ -73,6 +75,8 @@ export interface SpotifyTokens {
 	refreshToken?: string;
 	/** Epoch milliseconds. */
 	expiresAt: number;
+	/** Space-separated scopes Spotify granted, which can lag what we requested. */
+	scope: string;
 }
 
 /**
@@ -142,6 +146,7 @@ export async function exchangeCodeForToken(opts: {
 		accessToken: tr.access_token,
 		refreshToken: tr.refresh_token,
 		expiresAt: Date.now() + tr.expires_in * 1000,
+		scope: tr.scope ?? "",
 	};
 }
 
@@ -162,5 +167,6 @@ export async function refreshSpotifyToken(opts: {
 		accessToken: tr.access_token,
 		refreshToken: tr.refresh_token,
 		expiresAt: Date.now() + tr.expires_in * 1000,
+		scope: tr.scope ?? "",
 	};
 }

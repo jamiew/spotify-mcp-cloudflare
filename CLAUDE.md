@@ -25,6 +25,12 @@ and cover it in `scripts/e2e.ts` instead.
 `SPOTIFY_SCOPES` does not upgrade the existing token — it keeps the scopes it was
 minted with. Ask the user to run `/mcp` and reconnect, then retest.
 
+Reconnecting alone used to be insufficient: the Durable Object seeded its token
+once and then refreshed the old grant forever, so a new scope could never take
+effect. It now stores the grant's `scope` and re-seeds from `props` whenever that
+string changes. If a tool still reports a missing scope after a reconnect, check
+that comparison in `init()` before suspecting Spotify's consent screen.
+
 **`withFallback` caches per Durable Object.** A fallback fix may not take effect
 until the DO restarts, so a retest immediately after `wrangler deploy` can still
 show the old failure. If a fix looks like it didn't work, wait and retry before

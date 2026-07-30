@@ -86,6 +86,8 @@ type State = {
 	refreshToken: string;
 	/** Epoch milliseconds. */
 	expiresAt: number;
+	/** Scopes the stored token was minted with, so a re-scoped grant can replace it. */
+	scope: string;
 };
 
 type ToolResult = {
@@ -131,6 +133,12 @@ function mapError(e: unknown): ToolResult {
 		// scope from a retired endpoint, so never swallow it.
 		const detail = e.reason ? ` Spotify said: ${e.reason}` : "";
 		if (e.status === 403) {
+			// A scope this server now requests but the stored grant predates.
+			if ((e.reason ?? "").toLowerCase().includes("scope")) {
+				return toolError(
+					`This tool needs a Spotify permission the current login doesn't have. Reconnect this MCP server to Spotify to re-authorize.${detail}`,
+				);
+			}
 			return toolError(
 				`Spotify refused this action (forbidden). The account may lack access.${detail}`,
 			);
@@ -200,7 +208,7 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		{ instructions: INSTRUCTIONS },
 	);
 
-	initialState: State = { accessToken: "", refreshToken: "", expiresAt: 0 };
+	initialState: State = { accessToken: "", refreshToken: "", expiresAt: 0, scope: "" };
 
 	private client!: SpotifyClient;
 	/** Dedups concurrent refreshes so parallel tool calls share one request. */
@@ -219,6 +227,9 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 						accessToken: t.accessToken,
 						refreshToken: t.refreshToken ?? this.state.refreshToken,
 						expiresAt: t.expiresAt,
+						// Refreshing can't change granted scopes; keep the seeding
+						// grant's string so the comparison in init() stays stable.
+						scope: this.state.scope,
 					});
 					return t.accessToken;
 				} catch (e) {
@@ -242,12 +253,18 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 			return;
 		}
 
-		// Seed the persisted token state from the OAuth props on first run.
-		if (!this.state.accessToken && this.props?.accessToken) {
+		// Seed the persisted token state from the OAuth props on first run — and
+		// again whenever the grant's scopes differ from what we've stored.
+		// Refreshing only ever returns the scopes the token was minted with, so
+		// without this a scope change could never take effect: the user would
+		// re-authorize, Spotify would issue a correctly-scoped grant, and the DO
+		// would keep refreshing the old one forever.
+		if (this.props?.accessToken && this.props.scope !== this.state.scope) {
 			this.setState({
 				accessToken: this.props.accessToken,
 				refreshToken: this.props.refreshToken,
 				expiresAt: this.props.expiresAt,
+				scope: this.props.scope,
 			});
 		}
 

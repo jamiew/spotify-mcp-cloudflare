@@ -216,6 +216,7 @@ app.get("/callback", async (c) => {
 		accessToken: tokens.accessToken,
 		refreshToken: tokens.refreshToken,
 		expiresAt: tokens.expiresAt,
+		scope: tokens.scope,
 	};
 
 	const { redirectTo } = await c.env.OAUTH_PROVIDER.completeAuthorization({
