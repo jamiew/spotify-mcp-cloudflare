@@ -57,20 +57,18 @@ async function redirectToSpotify(
 app.get("/", (c) => c.html(landingPage(new URL(c.req.url).origin)));
 
 const ICON_HEADERS = { "Cache-Control": "public, max-age=86400" };
+const iconPngBytes = () => Uint8Array.from(atob(ICON_PNG_BASE64), (ch) => ch.charCodeAt(0));
 app.get("/icon.svg", (c) =>
 	c.body(ICON_SVG, 200, { ...ICON_HEADERS, "Content-Type": "image/svg+xml" }),
 );
 app.get("/icon.png", (c) =>
-	c.body(
-		Uint8Array.from(atob(ICON_PNG_BASE64), (ch) => ch.charCodeAt(0)),
-		200,
-		{
-			...ICON_HEADERS,
-			"Content-Type": "image/png",
-		},
-	),
+	c.body(iconPngBytes(), 200, { ...ICON_HEADERS, "Content-Type": "image/png" }),
 );
-app.get("/favicon.ico", (c) => c.redirect("/icon.svg", 301));
+// Real bytes, not a redirect to the SVG. Favicon fetchers often skip redirects
+// and reject SVG, which is how a client ends up showing no icon at all.
+app.get("/favicon.ico", (c) =>
+	c.body(iconPngBytes(), 200, { ...ICON_HEADERS, "Content-Type": "image/png" }),
+);
 
 app.get("/authorize", async (c) => {
 	const oauthReqInfo = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);

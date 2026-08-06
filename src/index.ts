@@ -44,7 +44,6 @@ import {
 	unfollowPlaylist,
 	updatePlaylistDetails,
 } from "./endpoints";
-import { ICON_PNG_BASE64, ICON_SVG } from "./icon";
 import {
 	isNoActiveDeviceError,
 	isPremiumRequiredError,
@@ -57,12 +56,15 @@ import {
 import { SpotifyHandler } from "./spotify-handler";
 import { isAccountAllowed, type Props, refreshSpotifyToken } from "./utils";
 
-// Data URIs rather than URLs on this Worker: the MCP server info is built
-// before any request, so we don't know our own origin, and clients are told to
-// treat cross-origin icons as suspect.
+// Server info is built before any request, so the origin can't be derived and
+// is hardcoded. Fork deployments should point this at their own Worker.
+const ORIGIN = "https://spotify-mcp-cloudflare.jamie-7e9.workers.dev";
+
+// https rather than data URIs: the MCP spec requires consumers to support
+// https and lets them reject data: sources, so data URIs can silently vanish.
 const ICONS = [
-	{ src: `data:image/png;base64,${ICON_PNG_BASE64}`, mimeType: "image/png", sizes: ["48x48"] },
-	{ src: `data:image/svg+xml;base64,${btoa(ICON_SVG)}`, mimeType: "image/svg+xml", sizes: ["any"] },
+	{ src: `${ORIGIN}/icon.png`, mimeType: "image/png", sizes: ["48x48"] },
+	{ src: `${ORIGIN}/icon.svg`, mimeType: "image/svg+xml", sizes: ["any"] },
 ];
 
 // Sent once at initialize. Covers what the tool descriptions can't say

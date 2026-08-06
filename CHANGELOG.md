@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **The server icon never reached clients.** Two independent causes. `/favicon.ico` 301-redirected to an SVG, which favicon fetchers routinely skip; it now serves the PNG bytes directly. And `serverInfo.icons` used `data:` URIs, which the MCP spec explicitly lets consumers reject; they are now `https` URLs on the Worker. The origin is hardcoded, so forks should repoint `ORIGIN` in `src/index.ts`.
+
 ## 2026-07-30 — 0.4.0
 
 ### New tools (24 → 33)

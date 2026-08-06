@@ -72,4 +72,11 @@ describe("worker", () => {
 		const bytes = new Uint8Array(await png.arrayBuffer());
 		expect([...bytes.slice(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
 	});
+
+	it("serves favicon.ico as image bytes, not a redirect", async () => {
+		const res = await SELF.fetch("https://example.com/favicon.ico", { redirect: "manual" });
+		expect(res.status).toBe(200);
+		const bytes = new Uint8Array(await res.arrayBuffer());
+		expect([...bytes.slice(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+	});
 });
