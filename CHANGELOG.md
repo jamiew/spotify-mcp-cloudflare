@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2026-09-17 — 0.6.1
 
 - **Batch reads.** `get_tracks` (was `get_track_details`), `get_artist` and `get_album` read up to 50 IDs (20 for albums) in one request instead of one request each. Restricted apps get a 403 from that route while single reads still work, so it falls back to one request per ID and remembers the answer, the same way `withFallback` remembers a regime. A single ID never touches the batch route.
 - **Deploys had silently stopped.** CI's dependency audit went red on 6 Aug over transitive `fast-uri`, `ip-address` and `nanoid` advisories, and the deploy job depends on it, so nothing after 0.4.0 reached the Worker, including the icon fix above. Two packages moved within their ranges; `nanoid` needed a `pnpm` override because `postcss` had resolved it below the patched line.
