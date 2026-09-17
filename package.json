@@ -26,7 +26,7 @@
 		"ci:local": "bash scripts/ci-local.sh"
 	},
 	"dependencies": {
-		"@cloudflare/workers-oauth-provider": "^0.8.1",
+		"@cloudflare/workers-oauth-provider": "^0.10.3",
 		"@modelcontextprotocol/sdk": "^1.30.0",
 		"agents": "^0.23.0",
 		"hono": "^4.13.8",
