@@ -1,13 +1,14 @@
 // Meta-lint: keeps code, docs, and the MCP tool surface honest with each other.
 // Run with `pnpm check:meta`. Designed as a guardrail for automated/LLM edits:
-// - every registered tool and prompt must be mentioned in README.md
+// - every registered tool and prompt (src/tools.ts) must be mentioned in README.md
 // - README's stated tool count must match the code
 // - every tool must carry MCP behaviour annotations
 // - tool descriptions have a token budget (they're loaded into every client's
 //   context window on connect)
 import { readFileSync } from "node:fs";
 
-const src = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
+const src = readFileSync(new URL("../src/tools.ts", import.meta.url), "utf8");
+const agent = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
 const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 const pkg = readFileSync(new URL("../package.json", import.meta.url), "utf8");
 
@@ -21,11 +22,9 @@ function fail(msg: string) {
 }
 
 // One chunk per tool: everything from its name to the start of its handler.
-const toolBlocks = [
-	...src.matchAll(/registerTool\(\s*\n?\s*"([a-z_]+)",([\s\S]*?)\n\t\t\tguard\(/g),
-];
+const toolBlocks = [...src.matchAll(/registerTool\(\s*\n?\s*"([a-z_]+)",([\s\S]*?)\n\t+guard\(/g)];
 const toolNames = toolBlocks.map((m) => m[1] ?? "");
-if (toolNames.length === 0) fail("found no registerTool calls in src/index.ts (parser broken?)");
+if (toolNames.length === 0) fail("found no registerTool calls in src/tools.ts (parser broken?)");
 const dupes = toolNames.filter((n, i) => toolNames.indexOf(n) !== i);
 if (dupes.length > 0) fail(`duplicate tool registrations: ${dupes.join(", ")}`);
 
@@ -40,8 +39,19 @@ for (const name of [...toolNames, ...promptNames]) {
 
 // Behaviour annotations drive client confirmation prompts, so a tool without
 // them silently defaults to "destructive, open world".
+// Tools share named annotation constants; resolve one to its definition so
+// the checks below see the literal hints.
+function resolveAnnotations(block: string): string {
+	const named = /annotations:\s*([A-Za-z_]+)\s*,/.exec(block)?.[1];
+	if (!named) return block;
+	const definition = new RegExp(`const ${named} = \\{([^}]*)\\}`).exec(src)?.[1] ?? "";
+	// Spreads pull in another constant's hints; the property after wins.
+	const base = /\.\.\.([A-Za-z_]+)/.exec(definition)?.[1];
+	const inherited = base ? resolveAnnotations(`annotations: ${base},`) : "";
+	return `${inherited} ${definition.replace(/\.\.\.[A-Za-z_]+,?/, "")}`;
+}
 for (const [i, name] of toolNames.entries()) {
-	const block = toolBlocks[i]?.[2] ?? "";
+	const block = resolveAnnotations(toolBlocks[i]?.[2] ?? "");
 	if (!block.includes("readOnlyHint")) fail(`tool ${name} has no readOnlyHint annotation`);
 	if (block.includes("readOnlyHint: false") && !block.includes("destructiveHint")) {
 		fail(`writing tool ${name} has no destructiveHint annotation`);
@@ -58,7 +68,7 @@ if (!countClaim) {
 
 // The version clients see must match the package; these drifted once already.
 const pkgVersion = /"version":\s*"([^"]+)"/.exec(pkg)?.[1];
-const srcVersion = /version:\s*"([^"]+)"/.exec(src)?.[1];
+const srcVersion = /version:\s*"([^"]+)"/.exec(agent)?.[1];
 if (!pkgVersion || !srcVersion) {
 	fail("could not read the version from package.json and/or src/index.ts");
 } else if (pkgVersion !== srcVersion) {
