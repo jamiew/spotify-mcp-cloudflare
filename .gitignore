@@ -8,3 +8,6 @@ dist/
 .DS_Store
 .e2e-auth.json
 worker-configuration.d.ts
+
+# Local symlink to the Python sibling repo
+spotify-mcp
