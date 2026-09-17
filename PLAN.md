@@ -154,7 +154,7 @@ audio-analysis, related-artists) is dead upstream and belongs in Phase 6, not he
 Restricted-regime landmines, tracked here so they aren't rediscovered: Spotify
 removed `GET /artists/{id}/top-tracks`, all batch fetches (`GET /tracks`,
 `/albums`, `/artists`), `GET /browse/*`, and `GET /users/{id}` in the restricted
-regime. `get_track_details` already loops single fetches rather than batching, and
+regime. `get_tracks` tries the batch route and falls back to single fetches on 403, and
 saved *albums* is documented as Extended-Quota-only under restricted mode — so
 `get_saved_albums` / `save_albums` / `remove_saved_albums` are the tools most
 likely to disappear if this app ever flips.

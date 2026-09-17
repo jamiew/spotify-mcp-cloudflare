@@ -29,7 +29,7 @@ import {
 	getSavedTracks,
 	getTopArtists,
 	getTopTracks,
-	getTrack,
+	getTracks,
 	removePlaylistTracks,
 	removeSavedAlbums,
 	removeSavedTracks,
@@ -39,6 +39,7 @@ import {
 	saveTracks,
 	search,
 	setPlaylistCover,
+	TRACKS_BATCH_MAX,
 	transferPlayback,
 	unfollowArtists,
 	unfollowPlaylist,
@@ -76,7 +77,7 @@ Start from search_music to turn names into IDs. get_playlist returns zero-based 
 
 The library splits by kind. Tracks: get_saved_tracks, save_tracks, remove_saved_tracks. Albums: get_saved_albums, save_albums, remove_saved_albums. Artists are followed rather than saved: get_followed_artists, follow_artists, unfollow_artists. Playlists too: follow_playlist, unfollow_playlist — and unfollowing one you own is how Spotify deletes it.
 
-For an artist, get_artist_details is the profile and get_artist_albums is the discography; Spotify no longer offers their top tracks, so use search_music with an artist: filter for those. set_playlist_cover replaces a playlist's artwork from a URL, which must serve a JPEG of at most 256 KB.
+For an artist, get_artist is the profile and get_artist_albums is the discography; Spotify no longer offers their top tracks, so use search_music with an artist: filter for those. set_playlist_cover replaces a playlist's artwork from a URL, which must serve a JPEG of at most 256 KB.
 
 Spotify has withdrawn /recommendations, audio-features and related-artists from third-party apps, so there is no recommendation endpoint to call. Build suggestions from get_top_items and get_recently_played plus search_music instead.
 
@@ -335,20 +336,21 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		);
 
 		this.server.registerTool(
-			"get_track_details",
+			"get_tracks",
 			{
 				title: "Track details",
-				description: "Get details for one or more tracks by ID (max 20).",
+				description: "Get details for one or more tracks by ID (max 50 per call).",
 				inputSchema: {
-					ids: z.array(z.string()).min(1).max(20).describe("Track IDs or spotify:track: URIs"),
+					ids: z
+						.array(z.string())
+						.min(1)
+						.max(TRACKS_BATCH_MAX)
+						.describe("Track IDs or spotify:track: URIs"),
 				},
 				annotations: { readOnlyHint: true, openWorldHint: true },
 			},
 			guard(async ({ ids }) => {
-				const tracks = [];
-				for (const id of ids) {
-					tracks.push(await getTrack(sp(), id));
-				}
+				const tracks = await getTracks(sp(), ids);
 				return ok({
 					tracks: tracks.map((t) => ({
 						...compactTrack(t),
@@ -364,7 +366,7 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		);
 
 		this.server.registerTool(
-			"get_artist_details",
+			"get_artist",
 			{
 				title: "Artist details",
 				description:
@@ -403,7 +405,7 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 		);
 
 		this.server.registerTool(
-			"get_album_details",
+			"get_album",
 			{
 				title: "Album details",
 				description: "Get details for an album, including its track list.",
@@ -1173,7 +1175,7 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 							type: "text",
 							text: `Find artists similar to ${artist}.
 
-Spotify's related-artists and /recommendations endpoints are gone for third-party apps, so work it out: get_artist_details for their genres, search_music with genre: and year: filters, and get_top_items to bias toward what I already listen to. Skip anything already in my top artists.
+Spotify's related-artists and /recommendations endpoints are gone for third-party apps, so work it out: get_artist for their genres, search_music with genre: and year: filters, and get_top_items to bias toward what I already listen to. Skip anything already in my top artists.
 
 Give me 8-10 artists with one line each on why, plus a representative track. Then ask whether to save them or build a playlist.`,
 						},

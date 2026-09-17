@@ -48,6 +48,9 @@ export const trackSchema = z.object({
 	is_local: z.boolean().nullish(),
 });
 
+// GET /tracks?ids= answers null, not 404, for an id it can't find.
+export const batchTracksSchema = z.object({ tracks: z.array(trackSchema.nullable()) });
+
 export const albumSchema = simplifiedAlbumSchema.extend({
 	tracks: z
 		.object({

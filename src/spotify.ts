@@ -82,6 +82,10 @@ export interface SpotifyClientOptions {
 
 const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+// 400 is here because the restricted /me/library endpoints reject rather than
+// 404 when the app is on the legacy regime.
+const REGIME_MISS_STATUSES = [400, 404, 405, 410];
+
 export class SpotifyClient {
 	private readonly tokenProvider: TokenProvider;
 	private readonly baseUrl: string;
@@ -89,8 +93,8 @@ export class SpotifyClient {
 	private readonly maxRateLimitRetries: number;
 	private readonly maxRetryAfterSeconds: number;
 	private readonly sleep: (ms: number) => Promise<void>;
-	/** Endpoint families confirmed to need the legacy path (cached per session). */
-	private readonly legacyFamilies = new Set<string>();
+	/** Endpoint families confirmed to need their fallback path (cached per session). */
+	private readonly fallbackFamilies = new Set<string>();
 
 	constructor(options: SpotifyClientOptions) {
 		this.tokenProvider = options.tokenProvider;
@@ -122,36 +126,34 @@ export class SpotifyClient {
 	}
 
 	/**
-	 * Tries the restricted-regime request first, falling back to the legacy
-	 * shape on 404/405/410 and remembering the answer for the session. Safe for
-	 * mutations: those statuses mean the route wasn't served.
+	 * Tries the preferred request first (the restricted-regime shape, usually),
+	 * falling back to the alternative when the status says the route isn't
+	 * served, and remembering the answer for the session. Safe for mutations:
+	 * those statuses mean the route wasn't served. Pass `fallbackOn` for routes
+	 * Spotify withholds with a 403 instead, such as batch reads.
 	 */
 	async withFallback<T>(
 		family: string,
-		restricted: () => Promise<T>,
-		legacy: () => Promise<T>,
+		preferred: () => Promise<T>,
+		fallback: () => Promise<T>,
+		fallbackOn: number[] = REGIME_MISS_STATUSES,
 	): Promise<T> {
-		if (this.legacyFamilies.has(family)) {
-			return legacy();
+		if (this.fallbackFamilies.has(family)) {
+			return fallback();
 		}
 		try {
-			return await restricted();
+			return await preferred();
 		} catch (error) {
 			if (
 				error instanceof SpotifyApiError &&
-				// 400: the restricted /me/library endpoints reject rather than 404 when
-				// the app is on the legacy regime.
-				(error.status === 400 ||
-					error.status === 404 ||
-					error.status === 405 ||
-					error.status === 410) &&
+				fallbackOn.includes(error.status) &&
 				// A 404 naming a playback problem is a real 404, not a regime miss.
 				!isNoActiveDeviceError(error)
 			) {
-				// Only cache the family as legacy if the legacy shape works; a
-				// genuine not-found fails both ways and caches nothing.
-				const result = await legacy();
-				this.legacyFamilies.add(family);
+				// Only cache the family if the fallback works; a genuine not-found
+				// fails both ways and caches nothing.
+				const result = await fallback();
+				this.fallbackFamilies.add(family);
 				return result;
 			}
 			throw error;

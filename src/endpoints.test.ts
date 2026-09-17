@@ -9,6 +9,7 @@ import {
 	getPlaylistTracks,
 	getSavedAlbums,
 	getSavedTracks,
+	getTracks,
 	removePlaylistTracks,
 	saveTracks,
 	search,
@@ -126,6 +127,53 @@ describe("getPlaylistTracks", () => {
 		const res = await getPlaylistTracks(client, "p1");
 		expect(res.tracks.map((t) => t.name)).toEqual(["Two"]);
 		expect(seen.map((s) => s.path)).toEqual(["/v1/playlists/p1/items", "/v1/playlists/p1/tracks"]);
+	});
+});
+
+describe("getTracks", () => {
+	const forbidden = () =>
+		Response.json({ error: { status: 403, message: "Forbidden" } }, { status: 403 });
+
+	it("reads several ids in one batch request and drops unknown ids", async () => {
+		const { client, seen } = makeClient({
+			"GET /v1/tracks": () => Response.json({ tracks: [track("t1", "One"), null] }),
+		});
+		const res = await getTracks(client, ["t1", "spotify:track:t9"]);
+		expect(res.map((t) => t.name)).toEqual(["One"]);
+		expect(seen.map((s) => `${s.path}?${s.query}`)).toEqual(["/v1/tracks?ids=t1%2Ct9"]);
+	});
+
+	it("never batches a single id", async () => {
+		const { client, seen } = makeClient({
+			"GET /v1/tracks/t1": () => Response.json(track("t1", "One")),
+		});
+		await getTracks(client, ["t1"]);
+		expect(seen.map((s) => s.path)).toEqual(["/v1/tracks/t1"]);
+	});
+
+	it("falls back to one request per id on 403 and remembers it", async () => {
+		const { client, seen } = makeClient({
+			"GET /v1/tracks": forbidden,
+			"GET /v1/tracks/t1": () => Response.json(track("t1", "One")),
+			"GET /v1/tracks/t2": () => Response.json(track("t2", "Two")),
+		});
+		expect((await getTracks(client, ["t1", "t2"])).map((t) => t.name)).toEqual(["One", "Two"]);
+		expect((await getTracks(client, ["t1", "t2"])).map((t) => t.name)).toEqual(["One", "Two"]);
+		expect(seen.map((s) => s.path)).toEqual([
+			"/v1/tracks",
+			"/v1/tracks/t1",
+			"/v1/tracks/t2",
+			"/v1/tracks/t1",
+			"/v1/tracks/t2",
+		]);
+	});
+
+	it("propagates any other batch failure", async () => {
+		const { client } = makeClient({
+			"GET /v1/tracks": () =>
+				Response.json({ error: { status: 500, message: "boom" } }, { status: 500 }),
+		});
+		await expect(getTracks(client, ["t1", "t2"])).rejects.toThrow("500");
 	});
 });
 

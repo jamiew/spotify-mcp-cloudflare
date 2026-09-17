@@ -1,7 +1,7 @@
 // Typed endpoint functions for verified-alive Spotify endpoints, with
 // restricted-vs-legacy regime fallback where the Feb 2026 migration moved
-// things. Dead endpoints (recommendations, audio-features, audio-analysis,
-// batch /tracks?ids=) are deliberately not exposed.
+// things. Dead endpoints (recommendations, audio-features, audio-analysis)
+// are deliberately not exposed.
 
 import type { z } from "zod";
 import { type SpotifyClient, toId, toUri } from "./spotify";
@@ -10,6 +10,7 @@ import {
 	type Artist,
 	albumSchema,
 	artistSchema,
+	batchTracksSchema,
 	type CurrentUser,
 	currentUserSchema,
 	type Device,
@@ -110,6 +111,36 @@ export async function search(
 
 export function getTrack(client: SpotifyClient, id: string): Promise<Track> {
 	return client.request(`/tracks/${encodeURIComponent(toId(id))}`, trackSchema);
+}
+
+/** Spotify's cap on `/tracks?ids=`. */
+export const TRACKS_BATCH_MAX = 50;
+
+/**
+ * Restricted apps get a 403 from the batch route while single reads still
+ * work, so degrade to one request per id and remember it. A single id never
+ * needs the batch route, so it never provokes that 403.
+ */
+export async function getTracks(client: SpotifyClient, ids: string[]): Promise<Track[]> {
+	const bare = ids.map(toId);
+	const oneByOne = async () => {
+		const tracks: Track[] = [];
+		for (const id of bare) tracks.push(await getTrack(client, id));
+		return tracks;
+	};
+	if (bare.length === 1) return oneByOne();
+	return client.withFallback(
+		"batch-tracks",
+		async () => {
+			const res = await client.request("/tracks", batchTracksSchema, {
+				query: { ids: bare.join(",") },
+			});
+			// Unknown ids come back as null rather than a 404.
+			return res.tracks.filter((t): t is Track => t !== null);
+		},
+		oneByOne,
+		[403],
+	);
 }
 
 export function getArtist(client: SpotifyClient, id: string): Promise<Artist> {
