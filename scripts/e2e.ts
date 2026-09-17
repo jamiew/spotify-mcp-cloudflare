@@ -3,7 +3,7 @@
 // tokens in .e2e-auth.json) and exercises read-only tools.
 //
 //   pnpm e2e                       # against the deployed worker
-//   E2E_SERVER=http://localhost:8788 pnpm e2e   # against wrangler dev
+//   E2E_SERVER=http://127.0.0.1:8788 pnpm e2e   # against wrangler dev
 import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
@@ -14,7 +14,8 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 
 const SERVER = process.env.E2E_SERVER ?? "https://spotify-mcp-cloudflare.jamie-7e9.workers.dev";
 const CALLBACK_PORT = 8976;
-const CALLBACK_URL = `http://localhost:${CALLBACK_PORT}/callback`;
+// 127.0.0.1, not localhost: Spotify rejects localhost redirect URIs.
+const CALLBACK_URL = `http://127.0.0.1:${CALLBACK_PORT}/callback`;
 const AUTH_CACHE = new URL("../.e2e-auth.json", import.meta.url).pathname;
 
 // biome-ignore lint/suspicious/noExplicitAny: untyped JSON cache, shapes owned by the SDK

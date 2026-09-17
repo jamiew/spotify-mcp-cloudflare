@@ -4,6 +4,7 @@
 
 - A 429 carrying `QUOTA_EXCEEDED` is no longer retried; quota is per developer account and cannot clear by waiting, so the tool reports it as such (#2).
 - The `ALLOWED_EMAILS` allowlist also matches Spotify's immutable `account_id` (#3).
+- Local redirect URIs use `127.0.0.1`; Spotify rejects `localhost` (#8).
 
 ## 2026-09-17 — 0.6.1
 

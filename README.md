@@ -196,7 +196,8 @@ cp .dev.vars.example .dev.vars   # then fill in the three values
 pnpm dev
 ```
 
-`wrangler dev` simulates KV locally. Use `http://localhost:8788/callback` as an
+`wrangler dev` simulates KV locally. Use `http://127.0.0.1:8788/callback` (Spotify
+rejects `localhost`) as an
 additional Spotify redirect URI for local testing.
 
 ## Notes
