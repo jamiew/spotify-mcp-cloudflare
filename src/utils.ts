@@ -1,5 +1,7 @@
 // Spotify OAuth helpers for the upstream (Spotify) side of the flow.
 
+import { z } from "zod";
+
 export const SPOTIFY_AUTH_URL = "https://accounts.spotify.com/authorize";
 export const SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token";
 
@@ -60,14 +62,13 @@ export type Props = {
 	scope: string;
 };
 
-/** Shape of Spotify's token endpoint JSON response. */
-interface SpotifyTokenResponse {
-	access_token: string;
-	token_type: string;
-	expires_in: number;
-	refresh_token?: string;
-	scope?: string;
-}
+/** Spotify's token endpoint JSON response. */
+const tokenResponseSchema = z.object({
+	access_token: z.string(),
+	expires_in: z.number(),
+	refresh_token: z.string().optional(),
+	scope: z.string().optional(),
+});
 
 /** Normalized token bundle used across the worker. */
 export interface SpotifyTokens {
@@ -110,7 +111,7 @@ async function requestToken(
 	clientId: string,
 	clientSecret: string,
 	body: Record<string, string>,
-): Promise<SpotifyTokenResponse> {
+): Promise<z.infer<typeof tokenResponseSchema>> {
 	const resp = await fetch(SPOTIFY_TOKEN_URL, {
 		method: "POST",
 		headers: {
@@ -122,7 +123,7 @@ async function requestToken(
 	if (!resp.ok) {
 		throw new Error(`Spotify token request failed (${resp.status}): ${await resp.text()}`);
 	}
-	return (await resp.json()) as SpotifyTokenResponse;
+	return tokenResponseSchema.parse(await resp.json());
 }
 
 /**

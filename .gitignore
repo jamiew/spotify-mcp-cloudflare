@@ -11,3 +11,4 @@ worker-configuration.d.ts
 
 # Local symlink to the Python sibling repo
 spotify-mcp
+coverage/

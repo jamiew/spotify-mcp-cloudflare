@@ -2,12 +2,15 @@
 // running in workerd via the vitest workers pool.
 import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
+
+const jsonObject = z.record(z.string(), z.unknown());
 
 describe("worker", () => {
 	it("serves OAuth authorization server metadata", async () => {
 		const res = await SELF.fetch("https://example.com/.well-known/oauth-authorization-server");
 		expect(res.status).toBe(200);
-		const meta = (await res.json()) as Record<string, unknown>;
+		const meta = jsonObject.parse(await res.json());
 		expect(meta.authorization_endpoint).toBe("https://example.com/authorize");
 		expect(meta.token_endpoint).toBe("https://example.com/token");
 		expect(meta.registration_endpoint).toBe("https://example.com/register");
@@ -34,7 +37,7 @@ describe("worker", () => {
 			}),
 		});
 		expect(res.status).toBe(201);
-		const reg = (await res.json()) as Record<string, unknown>;
+		const reg = jsonObject.parse(await res.json());
 		expect(typeof reg.client_id).toBe("string");
 	});
 

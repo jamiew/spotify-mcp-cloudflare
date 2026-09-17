@@ -7,14 +7,13 @@
 	"type": "module",
 	"scripts": {
 		"dev": "wrangler dev",
-		"start": "wrangler dev",
 		"deploy": "wrangler deploy",
-		"cf-typegen": "wrangler types",
 		"type-check": "wrangler types --include-env=false && tsc --noEmit",
 		"lint": "biome check .",
 		"format": "biome check --write .",
 		"test": "vitest run",
 		"test:watch": "vitest",
+		"test:coverage": "vitest run --coverage.enabled --coverage.provider=istanbul --coverage.include='src/**' --coverage.exclude='src/**/*.test.ts' --coverage.exclude='src/fake-spotify.ts'",
 		"check": "pnpm lint && pnpm lint:md && pnpm type-check && pnpm check:meta && pnpm test && pnpm check:size && pnpm check:sec",
 		"e2e": "node --experimental-strip-types scripts/e2e.ts",
 		"api:watch": "node --experimental-strip-types scripts/spotify-api-watch.ts",
@@ -22,8 +21,7 @@
 		"make:icon": "node --experimental-strip-types scripts/make-icon.ts",
 		"check:size": "pnpm exec wrangler deploy --dry-run --outdir /tmp/spotify-mcp-size-check 2>&1 | node --experimental-strip-types scripts/check-size.ts",
 		"lint:md": "markdownlint-cli2 \"*.md\"",
-		"check:sec": "gitleaks git --no-banner && pnpm audit --prod --audit-level high",
-		"ci:local": "bash scripts/ci-local.sh"
+		"check:sec": "gitleaks git --no-banner && pnpm audit --prod --audit-level high"
 	},
 	"dependencies": {
 		"@cloudflare/workers-oauth-provider": "^0.10.3",
@@ -35,6 +33,7 @@
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.14",
 		"@cloudflare/vitest-pool-workers": "^0.22.0",
+		"@vitest/coverage-istanbul": "^4.1.11",
 		"markdownlint-cli2": "^0.23.2",
 		"typescript": "^7.0.2",
 		"vitest": "^4.1.10",

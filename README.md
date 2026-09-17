@@ -81,13 +81,12 @@ What a client learns about this server before it calls anything:
 
 - **`instructions`** in the initialize result — how the tools fit together, which
   Spotify capabilities are gone, and the quirks worth knowing (zero-based
-  positions, Premium-only playback). Cheaper than repeating it in 33 tool
-  descriptions.
-- **Icons** on the server info, as `data:` URIs for both PNG and SVG. Data URIs
-  rather than URLs because the server info is built before any request, so the
-  Worker doesn't know its own origin — and the spec tells clients to distrust
-  cross-origin icons. Also served at `/icon.svg` and `/icon.png` for the landing
-  page, the favicon and the OAuth approval dialog.
+  positions, Premium-only playback). Cheaper than repeating it in every tool
+  description.
+- **Icons** on the server info as `https` URLs on the Worker (the spec lets
+  clients reject `data:` URIs). The origin is hardcoded in `src/index.ts`, since
+  server info is built before any request; forks should repoint it. Also served
+  at `/icon.svg`, `/icon.png` and `/favicon.ico`.
 - **`title`, `description`, `websiteUrl`** on the server info, and a `title` on
   every tool, for clients that render a human-readable surface.
 - **OAuth discovery** at `/.well-known/oauth-authorization-server`, plus dynamic
@@ -294,7 +293,7 @@ first change here even if you're human.
 pnpm check       # lint + markdownlint + typecheck + meta-lint + tests + size budget + security
 pnpm test        # just the tests (vitest in workerd via @cloudflare/vitest-pool-workers)
 pnpm check:meta  # code<->README tool parity, version parity, description budgets
-pnpm check:size  # worker bundle vs 600 KiB gzip budget
+pnpm check:size  # worker bundle vs 800 KiB gzip budget
 pnpm check:sec   # gitleaks secret scan + dependency audit (brew install gitleaks)
 pnpm e2e         # live OAuth smoke test against the deployed worker
 pnpm api:watch   # check for unreviewed Spotify Web API changelog entries
