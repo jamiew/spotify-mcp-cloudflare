@@ -10,8 +10,11 @@ import {
 	type Artist,
 	albumSchema,
 	artistSchema,
+	batchAlbumsSchema,
+	batchArtistsSchema,
 	batchTracksSchema,
 	type CurrentUser,
+	containsSchema,
 	currentUserSchema,
 	type Device,
 	devicesResponseSchema,
@@ -113,33 +116,104 @@ export function getTrack(client: SpotifyClient, id: string): Promise<Track> {
 	return client.request(`/tracks/${encodeURIComponent(toId(id))}`, trackSchema);
 }
 
-/** Spotify's cap on `/tracks?ids=`. */
-export const TRACKS_BATCH_MAX = 50;
+/** Spotify's caps on the batch routes. */
+export const BATCH_MAX = { tracks: 50, artists: 50, albums: 20 };
 
 /**
- * Restricted apps get a 403 from the batch route while single reads still
+ * Restricted apps get a 403 from the batch routes while single reads still
  * work, so degrade to one request per id and remember it. A single id never
  * needs the batch route, so it never provokes that 403.
  */
-export async function getTracks(client: SpotifyClient, ids: string[]): Promise<Track[]> {
+async function batchOrOneByOne<T, R>(
+	client: SpotifyClient,
+	kind: keyof typeof BATCH_MAX,
+	ids: string[],
+	schema: z.ZodType<R>,
+	pick: (res: R) => (T | null)[],
+	one: (id: string) => Promise<T>,
+): Promise<T[]> {
 	const bare = ids.map(toId);
 	const oneByOne = async () => {
-		const tracks: Track[] = [];
-		for (const id of bare) tracks.push(await getTrack(client, id));
-		return tracks;
+		const items: T[] = [];
+		for (const id of bare) items.push(await one(id));
+		return items;
 	};
 	if (bare.length === 1) return oneByOne();
 	return client.withFallback(
-		"batch-tracks",
+		`batch-${kind}`,
 		async () => {
-			const res = await client.request("/tracks", batchTracksSchema, {
-				query: { ids: bare.join(",") },
-			});
+			const res = await client.request(`/${kind}`, schema, { query: { ids: bare.join(",") } });
 			// Unknown ids come back as null rather than a 404.
-			return res.tracks.filter((t): t is Track => t !== null);
+			return pick(res).filter((x): x is T => x !== null);
 		},
 		oneByOne,
 		[403],
+	);
+}
+
+export function getTracks(client: SpotifyClient, ids: string[]): Promise<Track[]> {
+	return batchOrOneByOne(
+		client,
+		"tracks",
+		ids,
+		batchTracksSchema,
+		(r) => r.tracks,
+		(id) => getTrack(client, id),
+	);
+}
+
+export function getArtists(client: SpotifyClient, ids: string[]): Promise<Artist[]> {
+	return batchOrOneByOne(
+		client,
+		"artists",
+		ids,
+		batchArtistsSchema,
+		(r) => r.artists,
+		(id) => getArtist(client, id),
+	);
+}
+
+export function getAlbums(client: SpotifyClient, ids: string[]): Promise<Album[]> {
+	return batchOrOneByOne(
+		client,
+		"albums",
+		ids,
+		batchAlbumsSchema,
+		(r) => r.albums,
+		(id) => getAlbum(client, id),
+	);
+}
+
+export type LibraryKind = "track" | "album" | "artist";
+
+/** Restricted caps `/me/library/contains` at 40 URIs; legacy albums stop at 20. */
+export const CONTAINS_MAX = { track: 40, album: 20, artist: 40 };
+
+/**
+ * Restricted folded the three contains routes into /me/library/contains, keyed
+ * by URI; legacy keeps one route per kind, keyed by id.
+ */
+export function libraryContains(
+	client: SpotifyClient,
+	kind: LibraryKind,
+	ids: string[],
+): Promise<boolean[]> {
+	const bare = ids.map(toId);
+	const legacy = {
+		track: { path: "/me/tracks/contains", query: {} },
+		album: { path: "/me/albums/contains", query: {} },
+		artist: { path: "/me/following/contains", query: { type: "artist" } },
+	}[kind];
+	return client.withFallback(
+		"library-contains",
+		() =>
+			client.request("/me/library/contains", containsSchema, {
+				query: { uris: bare.map((id) => toUri(kind, id)).join(",") },
+			}),
+		() =>
+			client.request(legacy.path, containsSchema, {
+				query: { ids: bare.join(","), ...legacy.query },
+			}),
 	);
 }
 

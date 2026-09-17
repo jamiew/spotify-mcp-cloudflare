@@ -6,6 +6,8 @@ import { z } from "zod";
 import {
 	addPlaylistTracks,
 	addToQueue,
+	BATCH_MAX,
+	CONTAINS_MAX,
 	compactAlbum,
 	compactArtist,
 	compactPlaylist,
@@ -14,9 +16,9 @@ import {
 	createPlaylist,
 	followArtists,
 	followPlaylist,
-	getAlbum,
-	getArtist,
+	getAlbums,
 	getArtistAlbums,
+	getArtists,
 	getDevices,
 	getFollowedArtists,
 	getMe,
@@ -31,6 +33,7 @@ import {
 	getTopArtists,
 	getTopTracks,
 	getTracks,
+	libraryContains,
 	removePlaylistTracks,
 	removeSavedAlbums,
 	removeSavedTracks,
@@ -40,7 +43,6 @@ import {
 	saveTracks,
 	search,
 	setPlaylistCover,
-	TRACKS_BATCH_MAX,
 	transferPlayback,
 	unfollowArtists,
 	unfollowPlaylist,
@@ -64,6 +66,8 @@ export const INSTRUCTIONS = `Spotify for the signed-in user. Tracks, albums, art
 Start from search_music to turn names into IDs. get_playlist returns zero-based positions, which reorder_playlist and remove_tracks_from_playlist need. Playback tools need Spotify Premium and an open device; if none is active, list_devices then transfer_playback.
 
 The library splits by kind. Tracks: get_saved_tracks, save_tracks, remove_saved_tracks. Albums: get_saved_albums, save_albums, remove_saved_albums. Artists are followed rather than saved: get_followed_artists, follow_artists, unfollow_artists. Playlists too: follow_playlist, unfollow_playlist — and unfollowing one you own is how Spotify deletes it.
+
+get_tracks, get_artist and get_album each take up to 50 IDs (20 for albums) in one call. check_library says whether tracks or albums are saved and artists followed, so use it before a bulk save or follow instead of paging the library.
 
 For an artist, get_artist is the profile and get_artist_albums is the discography; Spotify no longer offers their top tracks, so use search_music with an artist: filter for those. set_playlist_cover replaces a playlist's artwork from a URL, which must serve a JPEG of at most 256 KB.
 
@@ -251,7 +255,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 				ids: z
 					.array(z.string())
 					.min(1)
-					.max(TRACKS_BATCH_MAX)
+					.max(BATCH_MAX.tracks)
 					.describe("Track IDs or spotify:track: URIs"),
 			},
 			annotations: lookup,
@@ -275,11 +279,17 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Artist details",
 			description:
-				"Get details for an artist: name, genres, followers, popularity. (Spotify removed artist top-tracks for third-party apps; use search_music with an artist: filter to find their tracks.)",
-			inputSchema: { id: z.string().describe("Artist ID or spotify:artist: URI") },
+				"Get details for one or more artists (max 50 per call): name, genres, followers, popularity. Spotify no longer offers top tracks; use search_music with an artist: filter for those.",
+			inputSchema: {
+				ids: z
+					.array(z.string())
+					.min(1)
+					.max(BATCH_MAX.artists)
+					.describe("Artist IDs or spotify:artist: URIs"),
+			},
 			annotations: lookup,
 		},
-		guard(async ({ id }) => ok(compactArtist(await getArtist(sp(), id)))),
+		guard(async ({ ids }) => ok({ artists: (await getArtists(sp(), ids)).map(compactArtist) })),
 	);
 
 	server.registerTool(
@@ -313,18 +323,27 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		"get_album",
 		{
 			title: "Album details",
-			description: "Get details for an album, including its track list.",
-			inputSchema: { id: z.string().describe("Album ID or spotify:album: URI") },
+			description:
+				"Get details for one or more albums (max 20 per call), each with its track list.",
+			inputSchema: {
+				ids: z
+					.array(z.string())
+					.min(1)
+					.max(BATCH_MAX.albums)
+					.describe("Album IDs or spotify:album: URIs"),
+			},
 			annotations: lookup,
 		},
-		guard(async ({ id }) => {
-			const album = await getAlbum(sp(), id);
+		guard(async ({ ids }) => {
+			const albums = await getAlbums(sp(), ids);
 			return ok({
-				...compactAlbum(album),
-				...(album.album_type ? { album_type: album.album_type } : {}),
-				tracks: (album.tracks?.items ?? []).map((t) => ({
-					...compactTrack(t),
-					...(t.track_number != null ? { track_number: t.track_number } : {}),
+				albums: albums.map((album) => ({
+					...compactAlbum(album),
+					...(album.album_type ? { album_type: album.album_type } : {}),
+					tracks: (album.tracks?.items ?? []).map((t) => ({
+						...compactTrack(t),
+						...(t.track_number != null ? { track_number: t.track_number } : {}),
+					})),
 				})),
 			});
 		}),
@@ -728,6 +747,34 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		guard(async ({ ids }) => {
 			await unfollowArtists(sp(), ids);
 			return okText(`Unfollowed ${ids.length} artist(s).`);
+		}),
+	);
+
+	server.registerTool(
+		"check_library",
+		{
+			title: "Check library",
+			description:
+				"Check whether tracks or albums are already saved, or artists already followed, in one call (max 40 IDs, 20 for albums). Use before save_tracks, save_albums or follow_artists instead of paging the library.",
+			inputSchema: {
+				kind: z.enum(["track", "album", "artist"]),
+				ids: z
+					.array(z.string())
+					.min(1)
+					.max(CONTAINS_MAX.track)
+					.describe("IDs or spotify: URIs of one kind"),
+			},
+			annotations: readOnly,
+		},
+		guard(async ({ kind, ids }) => {
+			if (ids.length > CONTAINS_MAX[kind]) {
+				return toolError(`check_library takes at most ${CONTAINS_MAX[kind]} ${kind} IDs per call.`);
+			}
+			const flags = await libraryContains(sp(), kind, ids);
+			return ok({
+				kind,
+				items: ids.map((id, i) => ({ id, in_library: flags[i] ?? false })),
+			});
 		}),
 	);
 

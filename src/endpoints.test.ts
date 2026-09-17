@@ -6,10 +6,13 @@ import {
 	controlPlayback,
 	createPlaylist,
 	followArtists,
+	getAlbums,
+	getArtists,
 	getPlaylistTracks,
 	getSavedAlbums,
 	getSavedTracks,
 	getTracks,
+	libraryContains,
 	removePlaylistTracks,
 	saveTracks,
 	search,
@@ -174,6 +177,46 @@ describe("getTracks", () => {
 				Response.json({ error: { status: 500, message: "boom" } }, { status: 500 }),
 		});
 		await expect(getTracks(client, ["t1", "t2"])).rejects.toThrow("500");
+	});
+});
+
+describe("getArtists and getAlbums", () => {
+	it("batch through their own routes and cache a 403 fallback per kind", async () => {
+		const { client, seen } = makeClient({
+			"GET /v1/artists": () => Response.json({ artists: [{ id: "a1", name: "A" }, null] }),
+			"GET /v1/albums": () =>
+				Response.json({ error: { status: 403, message: "Forbidden" } }, { status: 403 }),
+			"GET /v1/albums/al1": () => Response.json({ id: "al1", name: "One" }),
+			"GET /v1/albums/al2": () => Response.json({ id: "al2", name: "Two" }),
+		});
+		expect((await getArtists(client, ["a1", "a9"])).map((a) => a.name)).toEqual(["A"]);
+		expect((await getAlbums(client, ["al1", "al2"])).map((a) => a.name)).toEqual(["One", "Two"]);
+		expect((await getArtists(client, ["a1", "a9"])).map((a) => a.name)).toEqual(["A"]);
+		expect(seen.map((s) => s.path)).toEqual([
+			"/v1/artists",
+			"/v1/albums",
+			"/v1/albums/al1",
+			"/v1/albums/al2",
+			"/v1/artists",
+		]);
+	});
+});
+
+describe("libraryContains", () => {
+	it("asks /me/library/contains by uri, falling back to the legacy per-kind routes", async () => {
+		const { client, seen } = makeClient({
+			"GET /v1/me/library/contains": () =>
+				Response.json({ error: { status: 400, message: "Bad request" } }, { status: 400 }),
+			"GET /v1/me/following/contains": () => Response.json([true]),
+			"GET /v1/me/albums/contains": () => Response.json([false, true]),
+		});
+		expect(await libraryContains(client, "artist", ["spotify:artist:a1"])).toEqual([true]);
+		expect(await libraryContains(client, "album", ["al1", "al2"])).toEqual([false, true]);
+		expect(seen.map((s) => `${s.path}?${s.query}`)).toEqual([
+			"/v1/me/library/contains?uris=spotify%3Aartist%3Aa1",
+			"/v1/me/following/contains?ids=a1&type=artist",
+			"/v1/me/albums/contains?ids=al1%2Cal2",
+		]);
 	});
 });
 

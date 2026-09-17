@@ -48,9 +48,6 @@ export const trackSchema = z.object({
 	is_local: z.boolean().nullish(),
 });
 
-// GET /tracks?ids= answers null, not 404, for an id it can't find.
-export const batchTracksSchema = z.object({ tracks: z.array(trackSchema.nullable()) });
-
 export const albumSchema = simplifiedAlbumSchema.extend({
 	tracks: z
 		.object({
@@ -59,6 +56,14 @@ export const albumSchema = simplifiedAlbumSchema.extend({
 		})
 		.nullish(),
 });
+
+// The batch routes answer null, not 404, for an id they can't find.
+export const batchTracksSchema = z.object({ tracks: z.array(trackSchema.nullable()) });
+export const batchArtistsSchema = z.object({ artists: z.array(artistSchema.nullable()) });
+export const batchAlbumsSchema = z.object({ albums: z.array(albumSchema.nullable()) });
+
+/** The contains routes answer one boolean per id, in request order. */
+export const containsSchema = z.array(z.boolean());
 
 // Legacy /me returns display_name/email/country/product; restricted returns
 // little more than id. The email allowlist only works when Spotify still

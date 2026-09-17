@@ -37,14 +37,14 @@ MCP client ──/mcp──▶ OAuthProvider ──▶ SpotifyMCP (Durable Objec
 
 ## Tools
 
-33 tools. Tracks and playlists accept bare IDs or full `spotify:` URIs everywhere.
+34 tools. Tracks and playlists accept bare IDs or full `spotify:` URIs everywhere.
 
 | Area | Tools |
 | --- | --- |
 | Profile | `get_me` |
-| Search & lookups | `search_music` (per-type, paginated), `get_tracks` (batch of up to 50), `get_artist`, `get_artist_albums` (discography, filterable by release type), `get_album` |
+| Search & lookups | `search_music` (per-type, paginated), `get_tracks` (batch of up to 50), `get_artist` (batch of up to 50), `get_artist_albums` (discography, filterable by release type), `get_album` (batch of up to 20, with track lists) |
 | Playlists | `list_playlists`, `get_playlist` (details + positioned tracks), `create_playlist`, `update_playlist_details`, `set_playlist_cover`, `add_tracks_to_playlist`, `remove_tracks_from_playlist`, `reorder_playlist`, `follow_playlist`, `unfollow_playlist` |
-| Library | `get_saved_tracks`, `save_tracks`, `remove_saved_tracks`, `get_saved_albums`, `save_albums`, `remove_saved_albums` |
+| Library | `get_saved_tracks`, `save_tracks`, `remove_saved_tracks`, `get_saved_albums`, `save_albums`, `remove_saved_albums`, `check_library` (are these saved or followed?) |
 | Following | `get_followed_artists`, `follow_artists`, `unfollow_artists` |
 | Playback | `get_playback_state`, `control_playback` (play/pause/next/previous/seek/volume/shuffle/repeat), `get_queue`, `add_to_queue`, `list_devices`, `transfer_playback` |
 | Listening history | `get_recently_played`, `get_top_items` (top artists/tracks by time range) |
