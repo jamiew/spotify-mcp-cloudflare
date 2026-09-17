@@ -172,6 +172,10 @@ Your server is now live at `https://spotify-mcp-cloudflare.<your-subdomain>.work
 
 ## Connect an MCP client
 
+Running `claude` inside a clone registers the deployed server automatically via
+`.mcp.json`; `/mcp` then only needs the login. The instance behind it is capped
+at ~5 allowlisted accounts, so most people will want their own deploy.
+
 Point any remote-MCP-capable client at the `/mcp` URL. Clients that only speak
 stdio can bridge via [`mcp-remote`](https://www.npmjs.com/package/mcp-remote):
 
