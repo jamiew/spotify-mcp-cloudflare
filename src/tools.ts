@@ -33,6 +33,7 @@ import {
 	getTopArtists,
 	getTopTracks,
 	getTracks,
+	LIBRARY_WRITE_MAX,
 	libraryContains,
 	removePlaylistTracks,
 	removeSavedAlbums,
@@ -56,12 +57,13 @@ import {
 	SpotifyApiError,
 	SpotifyAuthError,
 	type SpotifyClient,
+	toUri,
 } from "./spotify";
 
 // Sent once at initialize. Covers what the tool descriptions can't say
 // individually: how the surface fits together, and which Spotify capabilities
 // are simply gone.
-export const INSTRUCTIONS = `Spotify for the signed-in user. Tracks, albums, artists and playlists are accepted as bare IDs or spotify: URIs anywhere.
+export const INSTRUCTIONS = `Spotify for the signed-in user. Tracks, albums, artists and playlists are accepted as bare IDs, spotify: URIs or open.spotify.com links anywhere.
 
 Start from search_music to turn names into IDs. get_playlist returns zero-based positions, which reorder_playlist and remove_tracks_from_playlist need. Playback tools need Spotify Premium and an open device; if none is active, list_devices then transfer_playback.
 
@@ -470,7 +472,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: additive,
 		},
 		guard(async ({ playlist_id, uris, position }) => {
-			const fullUris = uris.map((u) => (u.includes(":") ? u : `spotify:track:${u}`));
+			const fullUris = uris.map((u) => toUri("track", u));
 			const snapshot = await addPlaylistTracks(sp(), playlist_id, fullUris, position);
 			return ok({ added: fullUris.length, ...(snapshot ? { snapshot_id: snapshot } : {}) });
 		}),
@@ -492,7 +494,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: destructive,
 		},
 		guard(async ({ playlist_id, uris }) => {
-			const fullUris = uris.map((u) => (u.includes(":") ? u : `spotify:track:${u}`));
+			const fullUris = uris.map((u) => toUri("track", u));
 			const snapshot = await removePlaylistTracks(sp(), playlist_id, fullUris);
 			return ok({ removed: fullUris.length, ...(snapshot ? { snapshot_id: snapshot } : {}) });
 		}),
@@ -622,7 +624,11 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			title: "Like tracks",
 			description: "Save (like) tracks to the user's library.",
 			inputSchema: {
-				ids: z.array(z.string()).min(1).max(50).describe("Track IDs or spotify:track: URIs"),
+				ids: z
+					.array(z.string())
+					.min(1)
+					.max(LIBRARY_WRITE_MAX)
+					.describe("Track IDs or spotify:track: URIs"),
 			},
 			annotations: additiveIdempotent,
 		},
@@ -638,7 +644,11 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			title: "Unlike tracks",
 			description: "Remove tracks from the user's saved (liked) tracks.",
 			inputSchema: {
-				ids: z.array(z.string()).min(1).max(50).describe("Track IDs or spotify:track: URIs"),
+				ids: z
+					.array(z.string())
+					.min(1)
+					.max(LIBRARY_WRITE_MAX)
+					.describe("Track IDs or spotify:track: URIs"),
 			},
 			annotations: destructive,
 		},
@@ -678,7 +688,11 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			title: "Save albums",
 			description: "Save albums to the user's library.",
 			inputSchema: {
-				ids: z.array(z.string()).min(1).max(50).describe("Album IDs or spotify:album: URIs"),
+				ids: z
+					.array(z.string())
+					.min(1)
+					.max(LIBRARY_WRITE_MAX)
+					.describe("Album IDs or spotify:album: URIs"),
 			},
 			annotations: additiveIdempotent,
 		},
@@ -694,7 +708,11 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			title: "Remove saved albums",
 			description: "Remove albums from the user's library.",
 			inputSchema: {
-				ids: z.array(z.string()).min(1).max(50).describe("Album IDs or spotify:album: URIs"),
+				ids: z
+					.array(z.string())
+					.min(1)
+					.max(LIBRARY_WRITE_MAX)
+					.describe("Album IDs or spotify:album: URIs"),
 			},
 			annotations: destructive,
 		},
@@ -724,7 +742,11 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			title: "Follow artists",
 			description: "Follow artists on behalf of the user.",
 			inputSchema: {
-				ids: z.array(z.string()).min(1).max(50).describe("Artist IDs or spotify:artist: URIs"),
+				ids: z
+					.array(z.string())
+					.min(1)
+					.max(LIBRARY_WRITE_MAX)
+					.describe("Artist IDs or spotify:artist: URIs"),
 			},
 			annotations: additiveIdempotent,
 		},
@@ -740,7 +762,11 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			title: "Unfollow artists",
 			description: "Stop following artists.",
 			inputSchema: {
-				ids: z.array(z.string()).min(1).max(50).describe("Artist IDs or spotify:artist: URIs"),
+				ids: z
+					.array(z.string())
+					.min(1)
+					.max(LIBRARY_WRITE_MAX)
+					.describe("Artist IDs or spotify:artist: URIs"),
 			},
 			annotations: destructive,
 		},
@@ -771,6 +797,10 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 				return toolError(`check_library takes at most ${CONTAINS_MAX[kind]} ${kind} IDs per call.`);
 			}
 			const flags = await libraryContains(sp(), kind, ids);
+			// Pair by position, so a short answer must fail rather than mislabel.
+			if (flags.length !== ids.length) {
+				return toolError(`Spotify answered for ${flags.length} of ${ids.length} IDs; try again.`);
+			}
 			return ok({
 				kind,
 				items: ids.map((id, i) => ({ id, in_library: flags[i] ?? false })),

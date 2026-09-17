@@ -266,7 +266,8 @@ describe("saveTracks", () => {
 			"PUT /v1/me/tracks": () => new Response(null, { status: 200 }),
 		});
 		await saveTracks(client, ["t1", "spotify:track:t2"]);
-		expect(seen[0]?.body).toEqual({ uris: ["spotify:track:t1", "spotify:track:t2"] });
+		expect(seen[0]?.query.get("uris")).toBe("spotify:track:t1,spotify:track:t2");
+		expect(seen[0]?.body).toBeUndefined();
 		expect(seen[1]?.body).toEqual({ ids: ["t1", "t2"] });
 	});
 });
@@ -369,7 +370,7 @@ describe("followArtists", () => {
 			"PUT /v1/me/following": () => new Response(null, { status: 204 }),
 		});
 		await followArtists(client, ["a1", "spotify:artist:a2"]);
-		expect(seen[0]?.body).toEqual({ uris: ["spotify:artist:a1", "spotify:artist:a2"] });
+		expect(seen[0]?.query.get("uris")).toBe("spotify:artist:a1,spotify:artist:a2");
 		expect(seen[1]?.body).toEqual({ ids: ["a1", "a2"] });
 		expect(seen[1]?.query.get("type")).toBe("artist");
 	});

@@ -390,6 +390,13 @@ export async function reorderPlaylistTracks(
 	return res.snapshot_id ?? null;
 }
 
+/**
+ * Restricted caps `/me/library` at 40 URIs per call, and takes them as a query
+ * parameter: a JSON body is rejected with 400. Legacy routes allow 50 in a body
+ * of ids, so 40 is the cap that works everywhere.
+ */
+export const LIBRARY_WRITE_MAX = 40;
+
 /** Restricted folded playlist follows into /me/library alongside track and album saves. */
 export function followPlaylist(client: SpotifyClient, id: string): Promise<void> {
 	const pid = toId(id);
@@ -398,7 +405,7 @@ export function followPlaylist(client: SpotifyClient, id: string): Promise<void>
 		() =>
 			client.requestVoid("/me/library", {
 				method: "PUT",
-				body: { uris: [toUri("playlist", pid)] },
+				query: { uris: toUri("playlist", pid) },
 			}),
 		() =>
 			client.requestVoid(`/playlists/${encodeURIComponent(pid)}/followers`, {
@@ -414,7 +421,7 @@ export function unfollowPlaylist(client: SpotifyClient, id: string): Promise<voi
 		() =>
 			client.requestVoid("/me/library", {
 				method: "DELETE",
-				body: { uris: [toUri("playlist", pid)] },
+				query: { uris: toUri("playlist", pid) },
 			}),
 		() =>
 			client.requestVoid(`/playlists/${encodeURIComponent(pid)}/followers`, {
@@ -465,7 +472,7 @@ export function saveTracks(client: SpotifyClient, trackIds: string[]): Promise<v
 		() =>
 			client.requestVoid("/me/library", {
 				method: "PUT",
-				body: { uris: ids.map((id) => toUri("track", id)) },
+				query: { uris: ids.map((id) => toUri("track", id)).join(",") },
 			}),
 		() => client.requestVoid("/me/tracks", { method: "PUT", body: { ids } }),
 	);
@@ -478,7 +485,7 @@ export function removeSavedTracks(client: SpotifyClient, trackIds: string[]): Pr
 		() =>
 			client.requestVoid("/me/library", {
 				method: "DELETE",
-				body: { uris: ids.map((id) => toUri("track", id)) },
+				query: { uris: ids.map((id) => toUri("track", id)).join(",") },
 			}),
 		() => client.requestVoid("/me/tracks", { method: "DELETE", body: { ids } }),
 	);
@@ -510,7 +517,7 @@ export function saveAlbums(client: SpotifyClient, albumIds: string[]): Promise<v
 		() =>
 			client.requestVoid("/me/library", {
 				method: "PUT",
-				body: { uris: ids.map((id) => toUri("album", id)) },
+				query: { uris: ids.map((id) => toUri("album", id)).join(",") },
 			}),
 		() => client.requestVoid("/me/albums", { method: "PUT", body: { ids } }),
 	);
@@ -523,7 +530,7 @@ export function removeSavedAlbums(client: SpotifyClient, albumIds: string[]): Pr
 		() =>
 			client.requestVoid("/me/library", {
 				method: "DELETE",
-				body: { uris: ids.map((id) => toUri("album", id)) },
+				query: { uris: ids.map((id) => toUri("album", id)).join(",") },
 			}),
 		() => client.requestVoid("/me/albums", { method: "DELETE", body: { ids } }),
 	);
@@ -546,7 +553,7 @@ export function followArtists(client: SpotifyClient, artistIds: string[]): Promi
 		() =>
 			client.requestVoid("/me/library", {
 				method: "PUT",
-				body: { uris: ids.map((id) => toUri("artist", id)) },
+				query: { uris: ids.map((id) => toUri("artist", id)).join(",") },
 			}),
 		() =>
 			client.requestVoid("/me/following", {
@@ -564,7 +571,7 @@ export function unfollowArtists(client: SpotifyClient, artistIds: string[]): Pro
 		() =>
 			client.requestVoid("/me/library", {
 				method: "DELETE",
-				body: { uris: ids.map((id) => toUri("artist", id)) },
+				query: { uris: ids.map((id) => toUri("artist", id)).join(",") },
 			}),
 		() =>
 			client.requestVoid("/me/following", {

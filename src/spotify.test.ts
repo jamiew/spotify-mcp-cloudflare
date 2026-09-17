@@ -200,6 +200,18 @@ describe("toUri / toId / clamp", () => {
 		expect(toId("xyz")).toBe("xyz");
 	});
 
+	it("accepts share links and legacy playlist uris", () => {
+		expect(toUri("track", "https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC?si=abc")).toBe(
+			"spotify:track:4uLU6hMCjMI75M1A2tKUQC",
+		);
+		expect(toUri("track", "https://open.spotify.com/intl-de/album/1A2B")).toBe(
+			"spotify:album:1A2B",
+		);
+		expect(toId("https://open.spotify.com/playlist/37i9dQZF1DX")).toBe("37i9dQZF1DX");
+		expect(toId("spotify:user:someone:playlist:xyz")).toBe("xyz");
+		expect(toUri("track", "spotify:local:a:b:c:1")).toBe("spotify:local:1");
+	});
+
 	it("clamps into range", () => {
 		expect(clamp(0, 1, 50)).toBe(1);
 		expect(clamp(99, 1, 50)).toBe(50);

@@ -113,6 +113,24 @@ describe("registerTools", () => {
 		]);
 	});
 
+	it("add_to_queue accepts a share link without double-prefixing it", async () => {
+		const { call, seen } = await connect({
+			"POST /v1/me/player/queue": () => new Response(null, { status: 204 }),
+		});
+		await call("add_to_queue", {
+			uri: "https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC?si=x",
+		});
+		expect(seen[0]?.query.get("uri")).toBe("spotify:track:4uLU6hMCjMI75M1A2tKUQC");
+	});
+
+	it("check_library fails loudly on a short answer instead of mislabelling", async () => {
+		const { call } = await connect({
+			"GET /v1/me/library/contains": () => Response.json([true]),
+		});
+		const res = await call("check_library", { kind: "track", ids: ["t1", "t2"] });
+		expect(res.isError).toBe(true);
+	});
+
 	it("rejects seek without a position before touching Spotify", async () => {
 		const { call, seen } = await connect({});
 		const res = await call("control_playback", { action: "seek" });

@@ -292,15 +292,35 @@ export class SpotifyClient {
 	}
 }
 
-/** Normalizes a bare ID or URI into a full Spotify URI of the given kind. */
-export function toUri(kind: string, idOrUri: string): string {
-	return idOrUri.includes(":") ? idOrUri : `spotify:${kind}:${idOrUri}`;
+/**
+ * Reads the kind and id out of a `spotify:` URI or an open.spotify.com share
+ * URL. Legacy playlist URIs (`spotify:user:x:playlist:y`) and local-file URIs
+ * carry extra segments; the id is always the last one.
+ */
+function parseRef(ref: string): { kind: string; id: string } | undefined {
+	if (ref.startsWith("spotify:")) {
+		const parts = ref.split(":");
+		const kind = parts[1];
+		const id = parts[parts.length - 1];
+		return kind && id ? { kind, id } : undefined;
+	}
+	const url = /^https?:\/\/open\.spotify\.com\/(?:intl-[a-z]+\/)?([a-z]+)\/([A-Za-z0-9]+)/.exec(
+		ref,
+	);
+	const kind = url?.[1];
+	const id = url?.[2];
+	return kind && id ? { kind, id } : undefined;
 }
 
-/** Strips a `spotify:kind:` prefix if present, returning the bare ID. */
-export function toId(idOrUri: string): string {
-	const parts = idOrUri.split(":");
-	return parts[parts.length - 1] || idOrUri;
+/** Normalizes a bare ID, `spotify:` URI or share URL into a full Spotify URI. */
+export function toUri(kind: string, ref: string): string {
+	const parsed = parseRef(ref);
+	return parsed ? `spotify:${parsed.kind}:${parsed.id}` : `spotify:${kind}:${ref}`;
+}
+
+/** Strips a `spotify:kind:` prefix or share-URL wrapper, returning the bare ID. */
+export function toId(ref: string): string {
+	return parseRef(ref)?.id ?? ref;
 }
 
 export function clamp(n: number, lo: number, hi: number): number {
