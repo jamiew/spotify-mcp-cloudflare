@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A 429 carrying `QUOTA_EXCEEDED` is no longer retried; quota is per developer account and cannot clear by waiting, so the tool reports it as such (#2).
+
 ## 2026-09-17 — 0.6.1
 
 - **Batch reads.** `get_tracks` (was `get_track_details`), `get_artist` and `get_album` read up to 50 IDs (20 for albums) in one request instead of one request each. Restricted apps get a 403 from that route while single reads still work, so it falls back to one request per ID and remembers the answer, the same way `withFallback` remembers a regime. A single ID never touches the batch route.

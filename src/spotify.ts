@@ -26,8 +26,15 @@ export class SpotifyAuthError extends Error {
 }
 
 export class RateLimitedError extends Error {
-	constructor(public retryAfterSeconds?: number) {
-		super("Spotify is rate limiting right now. Wait a moment and try again.");
+	constructor(
+		public retryAfterSeconds?: number,
+		public quotaExceeded = false,
+	) {
+		super(
+			quotaExceeded
+				? "Spotify's daily API quota for this developer account is used up. Retrying will not help; it resets within 24 hours."
+				: "Spotify is rate limiting right now. Wait a moment and try again.",
+		);
 		this.name = "RateLimitedError";
 	}
 }
@@ -177,6 +184,12 @@ export class SpotifyClient {
 			}
 
 			if (response.status === 429) {
+				// Since July 2026 quota is counted per developer account and a 429
+				// carrying QUOTA_EXCEEDED cannot clear by waiting, so a retry only
+				// burns the pool shared by every app on the account.
+				if ((await this.extractReason(response))?.toUpperCase().includes("QUOTA_EXCEEDED")) {
+					throw new RateLimitedError(this.retryAfterSeconds(response), true);
+				}
 				if (rateLimitRetries >= this.maxRateLimitRetries) {
 					throw new RateLimitedError(this.retryAfterSeconds(response));
 				}

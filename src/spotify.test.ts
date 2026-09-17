@@ -93,6 +93,18 @@ describe("SpotifyClient", () => {
 		expect(seen.length).toBe(3);
 	});
 
+	it("never retries a 429 that says the quota is exhausted", async () => {
+		const { client, seen } = makeClient({
+			"GET /v1/thing": () =>
+				Response.json(
+					{ error: { status: 429, message: "Quota exceeded", reason: "QUOTA_EXCEEDED" } },
+					{ status: 429 },
+				),
+		});
+		await expect(client.request("/thing", nameSchema)).rejects.toThrow(/quota/);
+		expect(seen.length).toBe(1);
+	});
+
 	it("throws SpotifyApiError with the extracted reason on other failures", async () => {
 		const { client } = makeClient({
 			"PUT /v1/me/player/play": () =>
