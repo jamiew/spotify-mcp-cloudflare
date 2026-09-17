@@ -10,3 +10,9 @@ allowBuilds:
 auditConfig:
   ignoreGhsas:
     - GHSA-frvp-7c67-39w9
+
+# GHSA-2v37-7h3g-55p8: nanoid custom generators loop on size 0. Reached only
+# through vite -> postcss (a build-time path), and `pnpm update` won't move the
+# transitive past postcss's resolved pin. Stay on 3.x: postcss requires it as CJS.
+overrides:
+  "nanoid@<3.3.18": "^3.3.18"
