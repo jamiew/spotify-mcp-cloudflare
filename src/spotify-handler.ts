@@ -1,5 +1,16 @@
 import type { AuthRequest, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { Hono } from "hono";
+import {
+	addApprovedClient,
+	bindStateToSession,
+	createOAuthState,
+	generateCSRFProtection,
+	isClientApproved,
+	OAuthError,
+	renderApprovalDialog,
+	validateCSRFToken,
+	validateOAuthState,
+} from "./consent";
 import { ICON_PNG_BASE64, ICON_SVG } from "./icon";
 import { landingPage } from "./landing";
 import { currentUserSchema } from "./types";
@@ -11,17 +22,6 @@ import {
 	SPOTIFY_SCOPES,
 	type SpotifyTokens,
 } from "./utils";
-import {
-	addApprovedClient,
-	bindStateToSession,
-	createOAuthState,
-	generateCSRFProtection,
-	isClientApproved,
-	OAuthError,
-	renderApprovalDialog,
-	validateCSRFToken,
-	validateOAuthState,
-} from "./workers-oauth-utils";
 
 type Bindings = Env & { OAUTH_PROVIDER: OAuthHelpers };
 

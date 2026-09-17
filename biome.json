@@ -15,18 +15,6 @@
 			}
 		}
 	},
-	"overrides": [
-		{
-			"includes": ["src/workers-oauth-utils.ts"],
-			"linter": {
-				"rules": {
-					"suspicious": {
-						"noExplicitAny": "off"
-					}
-				}
-			}
-		}
-	],
 	"assist": {
 		"actions": {
 			"source": {
