@@ -95,8 +95,11 @@ export const playlistSchema = z.object({
 });
 
 // One entry of a playlist's contents. Restricted renamed `track` to `item`.
+// The entry is null for removed or region-locked tracks, and for some local
+// files, where the entry-level `is_local` is the only signal left.
 export const playlistEntrySchema = z.object({
 	added_at: z.string().nullish(),
+	is_local: z.boolean().nullish(),
 	item: trackSchema.nullish(),
 	track: trackSchema.nullish(),
 });

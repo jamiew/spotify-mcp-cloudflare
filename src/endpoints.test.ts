@@ -78,9 +78,43 @@ describe("getPlaylistTracks", () => {
 				}),
 		});
 		const res = await getPlaylistTracks(client, "spotify:playlist:p1");
-		expect(res.tracks.map((t) => t.name)).toEqual(["One"]);
-		expect(res.addedAt).toEqual(["2024-01-01"]);
+		expect(res.tracks.map((t) => t.name)).toEqual(["One", "Unavailable"]);
+		expect(res.addedAt).toEqual(["2024-01-01", null]);
 		expect(res.total).toBe(2);
+	});
+
+	it("keeps null and local rows in place so positions stay aligned", async () => {
+		const { client } = makeClient({
+			"GET /v1/playlists/p1/items": () =>
+				Response.json({
+					items: [
+						{ item: null, is_local: true },
+						{ item: { ...track("t1", "Ripped"), id: null, is_local: true } },
+						{ item: track("t2", "Two") },
+					],
+					total: 3,
+				}),
+		});
+		const res = await getPlaylistTracks(client, "p1");
+		expect(res.tracks.map(compactTrack)).toEqual([
+			{ name: "Unavailable", artist: "unknown", is_local: true },
+			{
+				name: "Ripped",
+				artist: "Artist",
+				album: "Album",
+				released: "2020-01-01",
+				duration_ms: 1000,
+				is_local: true,
+			},
+			{
+				id: "t2",
+				name: "Two",
+				artist: "Artist",
+				album: "Album",
+				released: "2020-01-01",
+				duration_ms: 1000,
+			},
+		]);
 	});
 
 	it("falls back to the legacy /tracks path with the legacy track field", async () => {

@@ -449,7 +449,7 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 			{
 				title: "Playlist contents",
 				description:
-					"Get a playlist's details and a page of its tracks, with zero-based positions (needed for reordering/removal). Spotify only returns contents for playlists the user owns, collaborates on, or follows.",
+					"Get a playlist's details and a page of its tracks, with zero-based positions (needed for reordering/removal). Unavailable and local tracks keep their position but have no id. Spotify only returns contents for playlists the user owns, collaborates on, or follows.",
 				inputSchema: {
 					playlist_id: z.string().describe("Playlist ID or spotify:playlist: URI"),
 					limit: z.number().int().min(1).max(50).default(50),

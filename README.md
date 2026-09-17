@@ -203,6 +203,7 @@ additional Spotify redirect URI for local testing.
 
 - Tracks and playlists can be referenced by bare ID or full `spotify:` URI in any tool.
 - `reorder_playlist` uses zero-based positions; call `get_playlist` first to see current positions.
+  Unavailable and local tracks keep their position with no `id`, so the numbers line up with Spotify's.
 - Playback control endpoints require Spotify Premium and an active device.
 - `set_playlist_cover` takes an `https` URL rather than image data: Spotify wants
   base64-encoded JPEG in the request body, which is far too large to pass as a

@@ -178,10 +178,10 @@ export async function getPlaylistTracks(
 	const addedAt: (string | null)[] = [];
 	for (const entry of page.items) {
 		const track = entry.item ?? entry.track;
-		if (track) {
-			tracks.push(track);
-			addedAt.push(entry.added_at ?? null);
-		}
+		// A null entry is a removed or region-locked track, or a local file. Keep
+		// its slot so positions stay aligned for reorder and remove.
+		tracks.push(track ?? { name: "Unavailable", is_local: entry.is_local ?? false });
+		addedAt.push(entry.added_at ?? null);
 	}
 	return { tracks, addedAt, total: page.total ?? null };
 }
@@ -610,6 +610,7 @@ export function compactTrack(track: Track): Record<string, unknown> {
 		...(track.album?.name ? { album: track.album.name } : {}),
 		...(track.album?.release_date ? { released: track.album.release_date } : {}),
 		...(track.duration_ms != null ? { duration_ms: track.duration_ms } : {}),
+		...(track.is_local ? { is_local: true } : {}),
 	};
 }
 

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Playlist positions drifted after a missing track.** `get_playlist` dropped rows whose track was null (removed, region-locked or local files), so every position after one was off by one, and `reorder_playlist` and `remove_tracks_from_playlist` acted on the wrong rows. Those rows now stay in place as `Unavailable` with no `id`, and local files carry `is_local: true`. Ported from the Python sibling's 0.5.0 (spotify-mcp #16, #18, thanks [@tedeuxx](https://github.com/tedeuxx)). Its other 0.5.0 fixes do not apply here: search already pages at the restricted cap of 10, track details never batch, and `control_playback` never read state back.
 - **The server icon never reached clients.** Two independent causes. `/favicon.ico` 301-redirected to an SVG, which favicon fetchers routinely skip; it now serves the PNG bytes directly. And `serverInfo.icons` used `data:` URIs, which the MCP spec explicitly lets consumers reject; they are now `https` URLs on the Worker. The origin is hardcoded, so forks should repoint `ORIGIN` in `src/index.ts`.
 
 ## 2026-07-30 — 0.4.0
