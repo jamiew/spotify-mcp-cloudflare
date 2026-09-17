@@ -81,7 +81,12 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 	async init() {
 		// Backup access gate (primary check is at the OAuth callback). If this
 		// grant's email isn't allowed, register no tools.
-		if (!isAccountAllowed([this.props?.email, this.props?.userId], this.env.ALLOWED_EMAILS)) {
+		if (
+			!isAccountAllowed(
+				[this.props?.email, this.props?.userId, this.props?.accountId],
+				this.env.ALLOWED_EMAILS,
+			)
+		) {
 			return;
 		}
 

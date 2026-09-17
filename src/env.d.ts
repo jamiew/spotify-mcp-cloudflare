@@ -13,9 +13,9 @@ declare namespace Cloudflare {
 		/** Random secret used to sign the "approved clients" cookie. */
 		COOKIE_ENCRYPTION_KEY: string;
 		/**
-		 * Optional comma-separated allowlist of Spotify account emails and/or user
-		 * ids. If unset or empty, any Spotify account may authorize. Set via
-		 * `wrangler secret put`.
+		 * Optional comma-separated allowlist of Spotify account emails, user ids
+		 * and/or account ids. If unset or empty, any Spotify account may authorize.
+		 * Set via `wrangler secret put`.
 		 */
 		ALLOWED_EMAILS?: string;
 	}

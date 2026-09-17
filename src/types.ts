@@ -70,6 +70,8 @@ export const containsSchema = z.array(z.boolean());
 // returns email.
 export const currentUserSchema = z.object({
 	id: z.string(),
+	// The stable identifier Spotify says to link accounts on; `id` can change.
+	account_id: z.string().nullish(),
 	display_name: z.string().nullish(),
 	email: z.string().nullish(),
 	country: z.string().nullish(),

@@ -29,10 +29,11 @@ export const SPOTIFY_SCOPES = [
  * Access control by Spotify account.
  *
  * `allowedRaw` is the `ALLOWED_EMAILS` secret: a comma-separated list of
- * permitted emails and/or Spotify user ids. Newer Spotify apps no longer see
- * the account email on /me, so ids keep the allowlist usable there. Empty or
- * unset means the server is open to any Spotify account. Anyone not on a
- * configured list is rejected at the OAuth callback.
+ * permitted emails, Spotify user ids and/or account ids. Newer Spotify apps no
+ * longer see the account email on /me, so ids keep the allowlist usable there,
+ * and `account_id` is the one Spotify says will never change. Empty or unset
+ * means the server is open to any Spotify account. Anyone not on a configured
+ * list is rejected at the OAuth callback.
  */
 export function isAccountAllowed(
 	identifiers: (string | undefined | null)[],
@@ -52,6 +53,8 @@ export function isAccountAllowed(
  */
 export type Props = {
 	userId: string;
+	/** Spotify's immutable account identifier; absent on grants issued before it was stored. */
+	accountId?: string;
 	displayName: string;
 	email: string;
 	accessToken: string;

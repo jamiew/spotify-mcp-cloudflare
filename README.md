@@ -154,11 +154,12 @@ Optional — restrict who can use the server:
 # Comma-separated allowlist of Spotify account emails. Only these accounts can
 # authorize; everyone else is rejected at the callback (no token issued).
 # Leave unset to allow any Spotify account.
-pnpm wrangler secret put ALLOWED_EMAILS          # e.g. me@example.com,spotify_user_id
+pnpm wrangler secret put ALLOWED_EMAILS          # e.g. me@example.com,spotify_user_id,account_id
 ```
 
-Entries match the Spotify account email **or** user id — newer Spotify apps no
-longer expose the email, so ids keep the allowlist usable there. Note Spotify
+Entries match the Spotify account email, user id **or** `account_id` — newer
+Spotify apps no longer expose the email, and `account_id` is the identifier
+Spotify says will never change. Note Spotify
 Development Mode separately caps apps at ~5 dashboard-allowlisted users.
 
 ### 4. Deploy
@@ -217,7 +218,8 @@ additional Spotify redirect URI for local testing.
   after one changes. Not requested, and so not implemented:
   `user-read-playback-position` (podcast/audiobook resume).
 - Access control: set the `ALLOWED_EMAILS` secret to a comma-separated list of
-  emails and/or user ids to restrict the server; leave it unset to allow anyone.
+  emails, user ids and/or account ids to restrict the server; leave it unset to
+  allow anyone.
 - `/recommendations`, audio-features and related-artists are dead for third-party
   apps; `get_top_items` + `get_recently_played` are the measured foundation for
   building recommendations instead.

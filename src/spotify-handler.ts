@@ -203,12 +203,13 @@ app.get("/callback", async (c) => {
 	const me = meParsed.data;
 
 	// Gate access to the allowlist (emails or user ids) before issuing any token.
-	if (!isAccountAllowed([me.email, me.id], c.env.ALLOWED_EMAILS)) {
+	if (!isAccountAllowed([me.email, me.id, me.account_id], c.env.ALLOWED_EMAILS)) {
 		return c.text("Access denied: this Spotify account is not authorized to use this server.", 403);
 	}
 
 	const props: Props = {
 		userId: me.id,
+		...(me.account_id ? { accountId: me.account_id } : {}),
 		displayName: me.display_name ?? me.id,
 		email: me.email ?? "",
 		accessToken: tokens.accessToken,
