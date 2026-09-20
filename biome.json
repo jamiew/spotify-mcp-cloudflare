@@ -1,7 +1,15 @@
 {
 	"$schema": "node_modules/@biomejs/biome/configuration_schema.json",
 	"files": {
-		"includes": ["src/**", "test/**", "scripts/**", "*.json", "*.ts", "!worker-configuration.d.ts"]
+		"includes": [
+			"src/**",
+			"test/**",
+			"scripts/**",
+			"*.json",
+			"*.ts",
+			"!worker-configuration.d.ts",
+			"!!.e2e-auth.json*"
+		]
 	},
 	"formatter": {
 		"indentStyle": "tab",

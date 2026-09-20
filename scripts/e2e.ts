@@ -5,6 +5,7 @@
 //   pnpm e2e                       # against the deployed worker
 //   E2E_SERVER=http://127.0.0.1:8788 pnpm e2e   # against wrangler dev
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
@@ -22,11 +23,25 @@ const AUTH_CACHE = new URL("../.e2e-auth.json", import.meta.url).pathname;
 type Cache = Record<string, any>;
 
 function loadCache(): Cache {
+	let cache: Cache;
 	try {
-		return JSON.parse(readFileSync(AUTH_CACHE, "utf8"));
+		cache = JSON.parse(readFileSync(AUTH_CACHE, "utf8"));
 	} catch {
 		return {};
 	}
+	const redirectUris = cache.clientInformation?.redirect_uris;
+	if (
+		cache.clientInformation &&
+		(!Array.isArray(redirectUris) || !redirectUris.includes(CALLBACK_URL))
+	) {
+		const backup = `${AUTH_CACHE}.${randomUUID()}.bak`;
+		// Fail closed if the private, exclusive backup cannot be created.
+		writeFileSync(backup, JSON.stringify(cache, null, 2), { mode: 0o600, flag: "wx" });
+		console.log(`Cached OAuth redirect changed. Saved a private backup to ${backup}.`);
+		console.log("Registering a new client; browser authorization is required.");
+		return {};
+	}
+	return cache;
 }
 
 function saveCache(cache: Cache) {

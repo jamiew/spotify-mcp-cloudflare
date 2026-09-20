@@ -3,17 +3,16 @@
 // are exercised the way a client sees them.
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
 	type ClientCapabilities,
 	ElicitRequestSchema,
 	type ElicitResult,
 } from "@modelcontextprotocol/sdk/types.js";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 import { fakeSpotify, type SeenRequest, staticTokens } from "./fake-spotify";
+import { createSpotifyServer } from "./server";
 import { SpotifyClient } from "./spotify";
-import { registerTools } from "./tools";
 
 async function connect(
 	routes: Record<string, (seen: SeenRequest) => Response>,
@@ -28,8 +27,7 @@ async function connect(
 		fetchImpl: fake.fetchImpl,
 		sleep: async () => {},
 	});
-	const server = new McpServer({ name: "test", version: "0" });
-	registerTools(server, () => spotify);
+	const server = createSpotifyServer(() => spotify);
 	const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 	await server.connect(serverTransport);
 	const client = new Client(
@@ -405,7 +403,7 @@ describe("registerTools", () => {
 		expect(seen).toEqual([]);
 	});
 
-	it("requires explicit acceptance before removing and returns the new snapshot", async () => {
+	it("requires explicit acceptance without code generation and returns the new snapshot", async () => {
 		let confirmed = false;
 		const { call } = await connect(
 			{
@@ -422,6 +420,15 @@ describe("registerTools", () => {
 				},
 			},
 		);
+		vi.stubGlobal(
+			"Function",
+			class {
+				constructor() {
+					throw new EvalError("Code generation from strings disallowed for this context");
+				}
+			},
+		);
+		onTestFinished(() => vi.unstubAllGlobals());
 		expect(
 			(await call("remove_tracks_from_playlist", { playlist_id: "p1", uris: ["t1"] }))
 				.structuredContent,

@@ -34,11 +34,11 @@ async function requestToken(
 		if (error.success && error.data.error === "invalid_grant") {
 			const expired = new SpotifyAuthError();
 			expired.message =
-				"Spotify authorization has lapsed. Stop the local server and run pnpm login again.";
+				"Spotify authorization has lapsed. Stop the local server and run pnpm run login again.";
 			throw expired;
 		}
 		throw new Error(
-			`Spotify authorization request failed (HTTP ${response.status}). Run login again if needed.`,
+			`Spotify authorization request failed (HTTP ${response.status}). Run pnpm run login again if needed.`,
 		);
 	}
 	const parsed = tokenResponseSchema.safeParse(await response.json().catch(() => null));
@@ -50,7 +50,7 @@ function requireScopes(scope: string): void {
 	const granted = new Set(scope.split(/\s+/));
 	if (SPOTIFY_SCOPES.split(" ").some((required) => !granted.has(required))) {
 		throw new Error(
-			"Spotify permissions have changed or were not fully granted. Stop the local server and run pnpm login again.",
+			"Spotify permissions have changed or were not fully granted. Stop the local server and run pnpm run login again.",
 		);
 	}
 }
@@ -99,7 +99,9 @@ export async function login(options: {
 		const code = await new Promise<string>((resolve, reject) => {
 			let completed = false;
 			const abort = () =>
-				reject(new Error("Spotify login timed out or was cancelled. Run pnpm login to try again."));
+				reject(
+					new Error("Spotify login timed out or was cancelled. Run pnpm run login to try again."),
+				);
 			const fail = (error: Error) => reject(error);
 			stopWaiting = () => {
 				signal.removeEventListener("abort", abort);
@@ -218,10 +220,10 @@ export class LocalTokenProvider implements TokenProvider {
 	): Promise<LocalTokenProvider> {
 		const tokens = await store.read();
 		if (!tokens)
-			throw new Error("No local Spotify login. Run pnpm login before starting the server.");
+			throw new Error("No local Spotify login. Run pnpm run login before starting the server.");
 		if (tokens.clientId !== clientId)
 			throw new Error(
-				"The stored login belongs to a different SPOTIFY_CLIENT_ID. Run pnpm login again.",
+				"The stored login belongs to a different SPOTIFY_CLIENT_ID. Run pnpm run login again.",
 			);
 		requireScopes(tokens.scope);
 		return new LocalTokenProvider(store, tokens, fetchImpl);
@@ -275,7 +277,7 @@ export class LocalTokenProvider implements TokenProvider {
 				error instanceof SpotifyAuthError
 					? error
 					: new Error(
-							"Could not refresh and safely save Spotify authorization. Restart the local server; if it still fails, run pnpm login again.",
+							"Could not refresh and safely save Spotify authorization. Restart the local server; if it still fails, run pnpm run login again.",
 						);
 			throw this.failure;
 		}

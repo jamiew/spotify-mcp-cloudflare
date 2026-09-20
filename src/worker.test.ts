@@ -41,28 +41,75 @@ describe("worker", () => {
 		expect(typeof reg.client_id).toBe("string");
 	});
 
-	it("serves the approval dialog for a registered client's authorize request", async () => {
+	it.each([undefined, "unregistered-client"])(
+		"rejects an invalid client locally without using its redirect URI (%s)",
+		async (clientId) => {
+			const url = new URL("https://example.com/authorize");
+			if (clientId) url.searchParams.set("client_id", clientId);
+			url.searchParams.set("redirect_uri", "https://untrusted.example/callback");
+			url.searchParams.set("response_type", "code");
+			const res = await SELF.fetch(url.href, { redirect: "manual" });
+			expect(res.status).toBe(400);
+			expect(res.headers.has("location")).toBe(false);
+			expect(jsonObject.parse(await res.json()).error).toBe("invalid_request");
+		},
+	);
+
+	it("rejects a mismatched redirect but serves approval for the exact registered URI", async () => {
+		const regRes = await SELF.fetch("https://example.com/register", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				redirect_uris: ["http://localhost:8976/callback"],
+				client_name: "test-client",
+				token_endpoint_auth_method: "none",
+			}),
+		});
+		expect(regRes.status).toBe(201);
+		const reg = z.object({ client_id: z.string() }).parse(await regRes.json());
+		const url = new URL("https://example.com/authorize");
+		url.searchParams.set("client_id", reg.client_id);
+		url.searchParams.set("redirect_uri", "http://127.0.0.1:8976/callback");
+		url.searchParams.set("response_type", "code");
+		url.searchParams.set("code_challenge", "abc123");
+		url.searchParams.set("code_challenge_method", "S256");
+		const mismatch = await SELF.fetch(url.href, { redirect: "manual" });
+		expect(mismatch.status).toBe(400);
+		expect(mismatch.headers.has("location")).toBe(false);
+		expect(jsonObject.parse(await mismatch.json()).error).toBe("invalid_request");
+
+		url.searchParams.set("redirect_uri", "http://localhost:8976/callback");
+		const res = await SELF.fetch(url.href, { redirect: "manual" });
+		expect(res.status).toBe(200);
+		const html = await res.text();
+		expect(html).toContain("test-client");
+		expect(html).toContain("csrf_token");
+	});
+
+	it("returns protocol errors only to a validated redirect with the original state and issuer", async () => {
 		const regRes = await SELF.fetch("https://example.com/register", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				redirect_uris: ["https://client.example/callback"],
-				client_name: "test-client",
 				token_endpoint_auth_method: "none",
 			}),
 		});
-		const reg = (await regRes.json()) as { client_id: string };
+		expect(regRes.status).toBe(201);
+		const reg = z.object({ client_id: z.string() }).parse(await regRes.json());
 		const url = new URL("https://example.com/authorize");
 		url.searchParams.set("client_id", reg.client_id);
 		url.searchParams.set("redirect_uri", "https://client.example/callback");
-		url.searchParams.set("response_type", "code");
-		url.searchParams.set("code_challenge", "abc123");
-		url.searchParams.set("code_challenge_method", "S256");
-		const res = await SELF.fetch(url.href);
-		expect(res.status).toBe(200);
-		const html = await res.text();
-		expect(html).toContain("test-client");
-		expect(html).toContain("csrf_token");
+		url.searchParams.set("response_type", "token");
+		url.searchParams.set("state", "original-client-state");
+		const res = await SELF.fetch(url.href, { redirect: "manual" });
+		expect(res.status).toBe(302);
+		const redirect = new URL(res.headers.get("location") ?? "");
+		expect(`${redirect.origin}${redirect.pathname}`).toBe("https://client.example/callback");
+		expect(redirect.searchParams.get("error")).toBe("unsupported_response_type");
+		expect(redirect.searchParams.get("state")).toBe("original-client-state");
+		expect(redirect.searchParams.get("iss")).toBe("https://example.com");
+		expect(redirect.searchParams.has("code")).toBe(false);
 	});
 
 	it("serves the icon as both svg and png", async () => {

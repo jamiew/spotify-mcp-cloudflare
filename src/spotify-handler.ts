@@ -1,4 +1,8 @@
-import type { AuthRequest, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
+import {
+	AuthorizationError,
+	type AuthRequest,
+	type OAuthHelpers,
+} from "@cloudflare/workers-oauth-provider";
 import { Hono } from "hono";
 import {
 	addApprovedClient,
@@ -71,7 +75,23 @@ app.get("/favicon.ico", (c) =>
 );
 
 app.get("/authorize", async (c) => {
-	const oauthReqInfo = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);
+	let oauthReqInfo: AuthRequest;
+	try {
+		oauthReqInfo = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);
+	} catch (error) {
+		if (!(error instanceof AuthorizationError)) throw error;
+		if (error.code === "server_error" || error.code === "temporarily_unavailable") throw error;
+		if (!error.redirectUri) {
+			// The provider has not validated a redirect, so the error must stay here.
+			return c.json({ error: error.code, error_description: error.description }, 400);
+		}
+		const redirect = new URL(error.redirectUri);
+		redirect.searchParams.set("error", error.code);
+		redirect.searchParams.set("error_description", error.description);
+		if (error.state) redirect.searchParams.set("state", error.state);
+		if (error.issuer) redirect.searchParams.set("iss", error.issuer);
+		return Response.redirect(redirect.href, 302);
+	}
 	const { clientId } = oauthReqInfo;
 	if (!clientId) {
 		return c.text("Invalid request", 400);

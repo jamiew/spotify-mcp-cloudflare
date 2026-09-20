@@ -31,6 +31,11 @@ one person's tokens with other users.
   bounded wait; longer waits are returned to the caller without retrying early.
 - Account allowlists accept email, user ID and immutable account ID. Prefer IDs.
 - Redirect documentation uses `127.0.0.1`, not `localhost`.
+- Local login instructions explicitly run `pnpm run login`, not pnpm's registry login.
+- Invalid OAuth clients and redirects fail locally without redirecting. Other
+  authorization validation errors redirect only after provider validation.
+- E2e cached registrations with a mismatched callback require fresh registration
+  and consent after an exclusive, private backup; old tokens are not reused.
 - Generic library routes use URI query parameters; `check_library` is implemented.
 - Optional restricted-response fields and missing/local playlist positions remain
   intact. The February endpoint rollout for older integrations was postponed;
@@ -48,18 +53,19 @@ user's cache automatically to force it.
 A branch push opens CI but does not deploy: deployment is gated on `main` and
 `DEPLOY_ENABLED`. Do not publish, merge or deploy as part of a code-only update.
 
-Verified on this update: `pnpm check` passes (86 workerd tests, seven Node auth
-tests, 680.15 KiB gzip). The actual `pnpm --silent stdio` process passes discovery,
-ping, competing-owner rejection, signout and missing-login checks with isolated
-synthetic tokens. Read-only live calls through the shared MCP core pass profile,
-per-type offset search, artist membership, bounded playlist pagination and playback
-state using an existing grant. The browser documentation renders on desktop/mobile.
+Release checks pass 89 workerd tests and seven Node auth tests, with a 688.58 KiB
+gzip bundle. Tests use the shared server factory and reject dynamic code generation
+during playlist-removal confirmation, matching the Worker runtime restriction.
+The actual stdio process passes discovery, ping, competing-owner rejection, signout
+and missing-login checks with isolated synthetic tokens.
 
-Fresh local Spotify consent and real upstream token rotation remain pre-deployment
-checks. The existing Python grant lacks some canonical scopes, and the new local
-entrypoint correctly refuses that incomplete grant rather than silently proceeding.
-PKCE callbacks and rotation are covered with simulated upstream responses, not a
-claim that a new Spotify login or deployed Worker refresh was exercised.
+Fresh native PKCE consent, real upstream refresh, private token persistence and
+all 17 read tools pass through the actual stdio entrypoint. All 14 non-playback
+write tools pass with disposable playlists and restored library membership.
+Python passes its 17 read tools, eight non-playback writes, six resources and five prompts.
+The deployed Worker passes 17 read tools; live confirmation exposed the validator
+bug fixed here. Repeat hosted writes after deployment before publishing the release.
+Playback and queue writes remain intentionally untested without explicit permission.
 
 ## Remaining decisions
 

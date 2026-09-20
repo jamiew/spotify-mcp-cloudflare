@@ -7,7 +7,7 @@ import { SpotifyClient } from "./spotify";
 async function main(): Promise<void> {
 	const [command, ...extra] = process.argv.slice(2);
 	if (extra.length || (command !== undefined && command !== "login" && command !== "signout")) {
-		throw new Error("Usage: pnpm --silent stdio | pnpm login | pnpm signout");
+		throw new Error("Usage: pnpm --silent stdio | pnpm run login | pnpm signout");
 	}
 	const clientId = process.env.SPOTIFY_CLIENT_ID?.trim();
 	if (command !== "signout" && !clientId) {

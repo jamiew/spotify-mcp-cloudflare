@@ -1,6 +1,6 @@
 {
 	"name": "spotify-mcp-cloudflare",
-	"version": "0.6.1",
+	"version": "0.7.0",
 	"description": "Spotify MCP server for Cloudflare Workers and local stdio - token-efficient tools, typed + tested",
 	"license": "MIT",
 	"private": true,

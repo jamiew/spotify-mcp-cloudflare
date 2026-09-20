@@ -1,12 +1,18 @@
 # Changelog
 
-## Unreleased
+## 2026-09-20 — 0.7.0
 
 - Local stdio and the existing Worker share the canonical TypeScript tool/API core; explicit PKCE login stores private, atomically replaced tokens with refresh rotation and single-owner locking.
 - Tools publish output schemas, accept search offsets and snapshot guards, and support bounded playlist pagination with progress. Playlist removal uses form elicitation when the client supports it.
 - Long `Retry-After` values are surfaced rather than shortened; quota errors no longer promise an undocumented daily reset.
 - Upstream OAuth error bodies are not exposed to callers or logs; revoked grants still trigger reauthorization.
-- Documentation records the [July quota update](https://developer.spotify.com/blog/2026-07-23-web-api-quota-updates), [postponed endpoint rollout](https://developer.spotify.com/blog/2026-02-06-update-on-developer-access-and-platform-security), remaining Python differences and [AI/public-hosting policy constraints](https://developer.spotify.com/policy). No public enrollment, SDK major migration or production deployment is implied.
+- Local setup and recovery instructions use `pnpm run login` so pnpm runs Spotify login instead of its built-in package-registry command.
+- Invalid OAuth clients and redirect URIs return a local client error rather than HTTP 500; protocol error redirects use only destinations validated by the OAuth provider.
+- The live e2e script preserves stale redirect registrations in exclusive, mode-0600 backups before requiring a fresh registration and browser authorization.
+- Validate playlist-removal confirmations without dynamic code generation, which Cloudflare Workers blocks.
+- Keep the e2e credential cache and its backups out of formatter and linter output.
+- Simplify local and hosted setup documentation and add a README banner made with Glif.
+- Documentation records the [July quota update](https://developer.spotify.com/blog/2026-07-23-web-api-quota-updates), [postponed endpoint rollout](https://developer.spotify.com/blog/2026-02-06-update-on-developer-access-and-platform-security), remaining Python differences and [AI/public-hosting policy constraints](https://developer.spotify.com/policy). Public enrollment and an SDK major migration remain out of scope.
 - A 429 carrying `QUOTA_EXCEEDED` is no longer retried; quota is shared per developer account, so an exhausted quota is surfaced immediately (#2).
 - The `ALLOWED_EMAILS` allowlist also matches Spotify's immutable `account_id` (#3).
 - Local redirect URIs use `127.0.0.1`; Spotify rejects `localhost` (#8).

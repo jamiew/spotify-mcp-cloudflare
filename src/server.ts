@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker-provider.js";
 import { version } from "../package.json";
 import type { SpotifyClient } from "./spotify";
 import { INSTRUCTIONS, registerTools } from "./tools";
@@ -21,7 +22,11 @@ export function createSpotifyServer(getSpotify?: () => SpotifyClient): McpServer
 				{ src: `${ORIGIN}/icon.svg`, mimeType: "image/svg+xml", sizes: ["any"] },
 			],
 		},
-		{ instructions: INSTRUCTIONS },
+		{
+			instructions: INSTRUCTIONS,
+			// Form responses must validate without eval/new Function in Workers.
+			jsonSchemaValidator: new CfWorkerJsonSchemaValidator(),
+		},
 	);
 	// A denied Worker session deliberately exposes no tools or prompts.
 	if (getSpotify) registerTools(server, getSpotify);
