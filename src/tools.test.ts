@@ -428,7 +428,9 @@ describe("registerTools", () => {
 				}
 			},
 		);
-		onTestFinished(() => vi.unstubAllGlobals());
+		onTestFinished(() => {
+			vi.unstubAllGlobals();
+		});
 		expect(
 			(await call("remove_tracks_from_playlist", { playlist_id: "p1", uris: ["t1"] }))
 				.structuredContent,
