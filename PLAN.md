@@ -63,8 +63,10 @@ Fresh native PKCE consent, real upstream refresh, private token persistence and
 all 17 read tools pass through the actual stdio entrypoint. All 14 non-playback
 write tools pass with disposable playlists and restored library membership.
 Python passes its 17 read tools, eight non-playback writes, six resources and five prompts.
-The deployed Worker passes 17 read tools; live confirmation exposed the validator
-bug fixed here. Repeat hosted writes after deployment before publishing the release.
+The deployed 0.7.0 Worker passes all 17 read tools and 14 non-playback write tools,
+including confirmed removal and cover upload. Temporary playlists were unfollowed
+and original library membership restored. Mismatched OAuth redirects return 400
+without a redirect. Native 0.7.0 also passes all 17 read tools.
 Playback and queue writes remain intentionally untested without explicit permission.
 
 ## Remaining decisions
