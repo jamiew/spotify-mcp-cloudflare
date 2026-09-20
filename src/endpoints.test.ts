@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
 	addToQueue,
 	compactPlaylist,
@@ -14,6 +15,7 @@ import {
 	getTracks,
 	libraryContains,
 	removePlaylistTracks,
+	reorderPlaylistTracks,
 	saveTracks,
 	search,
 	setPlaylistCover,
@@ -66,6 +68,61 @@ describe("search", () => {
 		});
 		const res = await search(client, "test", ["playlist"], 10);
 		expect(res.playlists?.map((p) => p.id)).toEqual(["p1"]);
+	});
+
+	it("starts every search type at the requested offset and counts null positions before filtering", async () => {
+		const { client, seen } = makeClient({
+			"GET /v1/search": (req) => {
+				const offset = Number(req.query.get("offset"));
+				const items = Array.from({ length: Number(req.query.get("limit")) }, (_, i) =>
+					i === 0 ? null : track(`t${offset + i}`, `Track ${offset + i}`),
+				);
+				return Response.json({
+					[req.query.get("type") === "track" ? "tracks" : "albums"]: { items, next: "more" },
+				});
+			},
+		});
+		const result = await search(client, "test", ["track", "album"], 12, 17);
+		expect(result.tracks?.map((item) => item.id)).toEqual([
+			"t18",
+			"t19",
+			"t20",
+			"t21",
+			"t22",
+			"t23",
+			"t24",
+			"t25",
+			"t26",
+			"t28",
+		]);
+		expect(result.albums?.map((item) => item.id)).toEqual(result.tracks?.map((item) => item.id));
+		expect(
+			seen.map((r) => [r.query.get("type"), r.query.get("offset"), r.query.get("limit")]),
+		).toEqual([
+			["track", "17", "10"],
+			["track", "27", "2"],
+			["album", "17", "10"],
+			["album", "27", "2"],
+		]);
+	});
+
+	it("never follows search pagination beyond Spotify's maximum starting offset", async () => {
+		const { client, seen } = makeClient({
+			"GET /v1/search": (req) =>
+				Response.json({
+					tracks: {
+						items: Array.from({ length: Number(req.query.get("limit")) }, (_, i) =>
+							track(`t${Number(req.query.get("offset")) + i}`, "Track"),
+						),
+						next: "more",
+					},
+				}),
+		});
+		const result = await search(client, "test", ["track"], 50, 990);
+		expect(result.tracks?.map((item) => item.id)).toEqual(
+			Array.from({ length: 20 }, (_, i) => `t${990 + i}`),
+		);
+		expect(seen.map((r) => r.query.get("offset"))).toEqual(["990", "1000"]);
 	});
 });
 
@@ -130,6 +187,23 @@ describe("getPlaylistTracks", () => {
 		const res = await getPlaylistTracks(client, "p1");
 		expect(res.tracks.map((t) => t.name)).toEqual(["Two"]);
 		expect(seen.map((s) => s.path)).toEqual(["/v1/playlists/p1/items", "/v1/playlists/p1/tracks"]);
+	});
+
+	it("preserves null rows and entry-level local flags in legacy contents", async () => {
+		const { client } = makeClient({
+			"GET /v1/playlists/p1/items": notFound,
+			"GET /v1/playlists/p1/tracks": () =>
+				Response.json({
+					items: [null, { is_local: true, track: { ...track("t1", "Local"), id: null } }],
+					next: null,
+				}),
+		});
+		const page = await getPlaylistTracks(client, "p1");
+		expect(page.tracks.map(compactTrack)).toMatchObject([
+			{ name: "Unavailable" },
+			{ name: "Local", is_local: true },
+		]);
+		expect(page.hasNext).toBe(false);
 	});
 });
 
@@ -230,6 +304,38 @@ describe("removePlaylistTracks", () => {
 		expect(snapshot).toBe("snap");
 		expect(seen[0]?.body).toEqual({ items: [{ uri: "spotify:track:t1" }] });
 		expect(seen[1]?.body).toEqual({ tracks: [{ uri: "spotify:track:t1" }] });
+	});
+});
+
+describe("reorderPlaylistTracks", () => {
+	it.each(["items", "tracks"])("guards concurrent edits on the %s route", async (route) => {
+		const { client } = makeClient({
+			...(route === "tracks" ? { "PUT /v1/playlists/p1/items": notFound } : {}),
+			[`PUT /v1/playlists/p1/${route}`]: (req) => {
+				const body = z.object({ snapshot_id: z.string().optional() }).parse(req.body);
+				if (body.snapshot_id !== "current") {
+					return Response.json(
+						{ error: { status: 409, message: "Snapshot conflict" } },
+						{ status: 409 },
+					);
+				}
+				return Response.json({ snapshot_id: "updated" });
+			},
+		});
+		await expect(
+			reorderPlaylistTracks(client, "p1", {
+				rangeStart: 2,
+				insertBefore: 0,
+				snapshotId: "stale",
+			}),
+		).rejects.toMatchObject({ status: 409 });
+		expect(
+			await reorderPlaylistTracks(client, "p1", {
+				rangeStart: 2,
+				insertBefore: 0,
+				snapshotId: "current",
+			}),
+		).toBe("updated");
 	});
 });
 

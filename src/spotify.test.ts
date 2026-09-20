@@ -60,7 +60,7 @@ describe("SpotifyClient", () => {
 		await expect(client.request("/thing", nameSchema)).rejects.toThrow(SpotifyAuthError);
 	});
 
-	it("backs off on 429 honoring a bounded Retry-After, then succeeds", async () => {
+	it("honors a short Retry-After before retrying", async () => {
 		const waits: number[] = [];
 		let calls = 0;
 		const { client } = makeClient(
@@ -68,7 +68,7 @@ describe("SpotifyClient", () => {
 				"GET /v1/thing": () => {
 					calls += 1;
 					return calls === 1
-						? Response.json({}, { status: 429, headers: { "Retry-After": "120" } })
+						? Response.json({}, { status: 429, headers: { "Retry-After": "2" } })
 						: Response.json({ name: "ok" });
 				},
 			},
@@ -81,7 +81,29 @@ describe("SpotifyClient", () => {
 		);
 		const res = await client.request("/thing", nameSchema);
 		expect(res.name).toBe("ok");
-		expect(waits).toEqual([5000]);
+		expect(waits).toEqual([2000]);
+	});
+
+	it("surfaces a long Retry-After without issuing an early retry", async () => {
+		const waits: number[] = [];
+		const { client, seen } = makeClient(
+			{
+				"GET /v1/thing": () =>
+					Response.json({}, { status: 429, headers: { "Retry-After": "120" } }),
+			},
+			{
+				sleep: async (ms) => {
+					waits.push(ms);
+				},
+			},
+		);
+		await expect(client.request("/thing", nameSchema)).rejects.toMatchObject({
+			name: "RateLimitedError",
+			retryAfterSeconds: 120,
+			quotaExceeded: false,
+		});
+		expect(seen).toHaveLength(1);
+		expect(waits).toEqual([]);
 	});
 
 	it("gives up with RateLimitedError after max 429 retries", async () => {

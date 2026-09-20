@@ -1,21 +1,9 @@
 import OAuthProvider from "@cloudflare/workers-oauth-provider";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { McpAgent } from "agents/mcp";
+import { createSpotifyServer } from "./server";
 import { SpotifyAuthError, SpotifyClient } from "./spotify";
 import { SpotifyHandler } from "./spotify-handler";
-import { INSTRUCTIONS, registerTools } from "./tools";
 import { isAccountAllowed, type Props, refreshSpotifyToken } from "./utils";
-
-// Server info is built before any request, so the origin can't be derived and
-// is hardcoded. Fork deployments should point this at their own Worker.
-const ORIGIN = "https://spotify-mcp-cloudflare.jamie-7e9.workers.dev";
-
-// https rather than data URIs: the MCP spec requires consumers to support
-// https and lets them reject data: sources, so data URIs can silently vanish.
-const ICONS = [
-	{ src: `${ORIGIN}/icon.png`, mimeType: "image/png", sizes: ["48x48"] },
-	{ src: `${ORIGIN}/icon.svg`, mimeType: "image/svg+xml", sizes: ["any"] },
-];
 
 /** Working token state, persisted in the Durable Object. */
 type State = {
@@ -27,18 +15,7 @@ type State = {
 	scope: string;
 };
 export class SpotifyMCP extends McpAgent<Env, State, Props> {
-	server = new McpServer(
-		{
-			name: "spotify-mcp",
-			title: "Spotify",
-			version: "0.6.1",
-			description:
-				"Search Spotify and manage playlists, library and playback for the signed-in user.",
-			websiteUrl: "https://github.com/jamiew/spotify-mcp-cloudflare",
-			icons: ICONS,
-		},
-		{ instructions: INSTRUCTIONS },
-	);
+	server = createSpotifyServer();
 
 	initialState: State = { accessToken: "", refreshToken: "", expiresAt: 0, scope: "" };
 
@@ -116,7 +93,18 @@ export class SpotifyMCP extends McpAgent<Env, State, Props> {
 				refreshAccessToken: () => this.doRefresh(),
 			},
 		});
-		registerTools(this.server, () => this.client);
+		this.server = createSpotifyServer(() => {
+			// An initialized session must not retain access after an allowlist change.
+			if (
+				!isAccountAllowed(
+					[this.props?.email, this.props?.userId, this.props?.accountId],
+					this.env.ALLOWED_EMAILS,
+				)
+			) {
+				throw new SpotifyAuthError();
+			}
+			return this.client;
+		});
 	}
 }
 

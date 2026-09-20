@@ -2,9 +2,9 @@
 
 ## The test suite will lie to you
 
-`pnpm test` runs 42 tests fully offline against `src/fake-spotify.ts`. On
-2026-07-26 all 42 passed while **every one of the 24 tools was dead in
-production**. Three separate bugs sat exactly where the suite substitutes a fake:
+The Worker tests run offline against `src/fake-spotify.ts`. On 2026-07-26 all
+42 tests passed while **every one of the then-24 tools was dead in production**.
+Three separate bugs sat exactly where the suite substitutes a fake:
 
 - the fake injects an arrow-function `fetchImpl`, so the real `fetch`'s receiver
   check — a genuine "Illegal invocation" crash in workerd — was unobservable;
@@ -42,11 +42,11 @@ Feb 2026 split apps into a **full/legacy** and a **restricted** regime with
 different endpoint shapes. `withFallback` in `src/spotify.ts` tries restricted
 first, falls back to legacy, and caches the answer per family.
 
-This app currently gets the **full/legacy** regime for every family probed,
-despite being development-mode and therefore due for restriction. Don't rely on
-it. Response fields that restricted mode strips (`followers`, `popularity`,
-`email`, `country`, `product`) are all `nullish()` in `src/types.ts` — keep them
-that way, and never make a stripped-in-restricted field required.
+Past live probes found full/legacy responses for this app. That is an observation,
+not its permanent access contract: Spotify postponed the March 9 endpoint rollout
+for existing integrations. Check current official guidance and observed responses.
+Fields restricted mode strips (`followers`, `popularity`, `email`, `country`,
+`product`) stay optional in `src/types.ts`.
 
 Run `/spotify-api-watch` to check for upstream changes and probe which regime
 we're actually on. It's also the right reflex when a tool starts failing in a way
@@ -71,8 +71,34 @@ overwrites or deletes existing data (`remove_saved_tracks`, `unfollow_playlist`,
 `reorder_playlist`), not merely "writes" (`save_tracks`, `add_to_queue`).
 
 Guidance that applies to the whole surface goes in `INSTRUCTIONS` at the top of
-`src/index.ts`, not into every tool description — it ships once per session
-instead of 24 times, and the descriptions are under a token budget.
+the shared server/tool setup, not every tool description. It ships once per
+session; keep descriptions within the metadata budget.
+
+## Canonical local and remote implementation
+
+New Spotify API/tool work starts here. Local stdio and the Worker must consume
+the same tool registrar and endpoint layer. Keep filesystem/process/browser
+concerns out of the shared core and Cloudflare-specific imports out of stdio.
+The Python sibling remains supported; document real contract differences rather
+than calling equal versions feature parity.
+
+Local login uses PKCE and loopback-only callbacks. Token files stay private,
+schema-validated and atomically replaced; refresh rotation must persist before
+returning a token. Never log tokens or read secret-bearing files into an agent's
+context. Use explicit auth commands, not browser launches during MCP startup.
+
+`Retry-After` is a minimum, not a value to clamp downward. Surface long waits;
+never retry `QUOTA_EXCEEDED` or promise a reset interval Spotify has not documented.
+July 2026 allows 25 Client IDs but shares Development Mode quota per developer.
+
+Annotations are client hints, not authorization or human consent. Removal
+elicitation must fail closed on rejection/error when supported. Preserve optional
+snapshot guards, paging positions and genuine MCP output schemas.
+
+Public availability needs Spotify policy clearance, not just working OAuth.
+Its policy restricts AI ingestion beyond training. Never assume an unset
+allowlist is private or silently open enrollment. Keep deployment and credential
+changes separate from code commits unless the user authorizes them.
 
 ## Before finishing
 
@@ -80,7 +106,6 @@ instead of 24 times, and the descriptions are under a token budget.
 pnpm check    # everything CI runs: lint, markdownlint, typecheck, meta, tests, size, security
 ```
 
-`pnpm check` must be green — it mirrors CI exactly, so a green local check means
-a green build. Keep `PLAN.md` current after substantial work; it's the living
-status doc another session resumes from, and it carries an exec summary plus the
-TODO list at the top.
+`pnpm check` covers the repository quality gates, not live account behavior.
+Report exactly which runtime paths were exercised and which need account consent
+or a deployment. Keep `PLAN.md` current after substantial changes.

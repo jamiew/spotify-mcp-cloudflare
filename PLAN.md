@@ -1,75 +1,94 @@
 # PLAN — spotify-mcp-cloudflare
 
-Living status doc for the remote Spotify MCP server on Cloudflare Workers. The
-deployed URL and setup are in `README.md`; history lives in `CHANGELOG.md` and
-git. This file holds only what is current.
+Living status for the canonical TypeScript Spotify implementation. Setup and
+upstream policy citations are in `README.md`; history is in `CHANGELOG.md`.
+Source changes on a branch are not evidence that the hosted instance is updated.
 
-## Where things stand (2026-09-17)
+## Direction (2026-09-20)
 
-34 tools and 3 prompts on a typed Spotify layer (`src/spotify.ts` client,
-`src/endpoints.ts`, Zod shapes in `src/types.ts`), with per-family fallback
-between the restricted (Feb 2026) and legacy API regimes. The tool surface is
-`src/tools.ts`, driven in-process by `src/tools.test.ts`; `src/index.ts` is the
-Durable Object, token lifecycle and OAuth wiring; `src/consent.ts` is the browser
-consent flow. This app still gets the full/legacy regime on every family probed.
+One Spotify API/tool core, two transports: local stdio with explicit PKCE login,
+and the existing OAuth-protected Cloudflare Worker. Start new tool and API work
+here. The [Python classic edition](https://github.com/jamiew/spotify-mcp) remains
+supported, with selected compatibility fixes ported back. Do not remove it just
+because both projects have the same version number.
 
-Lessons that keep paying: the offline suite can be green while production is
-dead (2026-07-26, all 24 tools; 2026-07-30, scope re-grant), so changes to the
-client, endpoints, scopes or auth get verified with live MCP calls. Green tests
-are necessary, not sufficient. `/spotify-api-watch` is the reflex when a tool
-starts failing in a way that smells upstream.
+The canonical surface keeps 34 tools and three prompts. This update brings over
+output schemas, explicit search offset, snapshot-guarded reordering, bounded
+playlist pagination/progress and client-supported removal elicitation. Python
+still has resources, two additional prompts and best-effort playback confirmation.
+Public names and result shapes differ; this is not a drop-in client migration.
 
-Kept in sync with the Python sibling
-[spotify-mcp](https://github.com/jamiew/spotify-mcp): tool names, batch reads,
-`check_library` and the 0.5.0 fixes came across in September 2026; nine tools
-(cover art, follows, saved albums, discography) still only exist here.
+The Worker remains on McpAgent and MCP SDK v1 for this pass. Changing the token
+owner, transport and SDK at the same time as adding local mode would make failures
+harder to isolate. Local mode must not import Cloudflare-only modules or share
+one person's tokens with other users.
 
-## TODO
+## Completed API corrections
 
-- [ ] Phase 6 — recommendations v2 ([#7](https://github.com/jamiew/spotify-mcp-cloudflare/issues/7), insight-driven since `/recommendations` is gone): `get_top_items` + `get_recently_played` landed as the measured foundation; the `discover_similar` prompt is the stopgap; `recommend_tracks` still to design
-- [ ] Optional: elicitation gating for destructive ops (unfollow_playlist, remove_*) — partly moot now that those tools declare `destructiveHint`, which is what clients gate on; only worth it for clients that ignore annotations
-- [ ] Optional: publish to the MCP registry ([#5](https://github.com/jamiew/spotify-mcp-cloudflare/issues/5)) — the last real discoverability gap
-- [ ] Live smoke test in CI ([#4](https://github.com/jamiew/spotify-mcp-cloudflare/issues/4)) — point `scripts/e2e.ts` at the deployed Worker and run it on a schedule; the fake-upstream suite structurally cannot catch the bug class found on 2026-07-26
-- [ ] Verify `add_to_queue` / `control_playback` / `transfer_playback` against a real active device ([#6](https://github.com/jamiew/spotify-mcp-cloudflare/issues/6))
-- [ ] Don't retry 429s carrying `QUOTA_EXCEEDED` ([#2](https://github.com/jamiew/spotify-mcp-cloudflare/issues/2)) — quota is counted per developer account since July 2026, so retries burn every app's pool
-- [ ] Accept `account_id` in the allowlist ([#3](https://github.com/jamiew/spotify-mcp-cloudflare/issues/3))
-- [ ] Use `127.0.0.1`, not `localhost`, in the local redirect-URI docs ([#8](https://github.com/jamiew/spotify-mcp-cloudflare/issues/8))
-- [ ] Public multi-user hosting is capped by Spotify at 5 users/app ([#1](https://github.com/jamiew/spotify-mcp-cloudflare/issues/1)) — recorded as a constraint, not a task; self-hosting is the answer
-- [ ] Move from the deprecated `McpAgent` to `createMcpHandler` with MCP SDK v2 (agents 0.20+); drops the v1 SDK from the bundle and the 800 KiB size budget back to 600
-- [ ] Request logging (one line per Spotify request and per tool call) so Workers Logs can show what real traffic looks like before optimizing further
-- [ ] Optional: `control_playback` could read state back after acting, as the Python server does (bounded polling, since Spotify's player writes are asynchronous)
+- `QUOTA_EXCEEDED` is surfaced without retry. Development Mode quota is shared
+  across the developer account. No universal reset time is promised.
+- Ordinary rate limits are retried only when the full `Retry-After` fits the
+  bounded wait; longer waits are returned to the caller without retrying early.
+- Account allowlists accept email, user ID and immutable account ID. Prefer IDs.
+- Redirect documentation uses `127.0.0.1`, not `localhost`.
+- Generic library routes use URI query parameters; `check_library` is implemented.
+- Optional restricted-response fields and missing/local playlist positions remain
+  intact. The February endpoint rollout for older integrations was postponed;
+  date alone does not establish an app's regime.
 
-## Known API surface we haven't implemented
+## Verification and release gates
 
-Audited 2026-07-30 against the live Web API reference and the February 2026
-migration guide. These are alive and reachable — the reasons are ours, not
-Spotify's. Anything Spotify has withdrawn (`/recommendations`, audio-features,
-audio-analysis, related-artists) is dead upstream and belongs in Phase 6, not here.
+Offline tests once passed while every production tool failed. Run `pnpm check`,
+then exercise the actual local process and remote workerd surface. Mocked upstream
+requests establish request shapes and failure behavior, not Spotify acceptance.
+Before deploying auth/client/scope changes, verify authenticated live reads,
+refresh and reauthorization. Scope changes require new consent; never delete a
+user's cache automatically to force it.
 
-- **Podcasts, audiobooks, chapters** — shows/episodes/audiobooks lookups, the
-  saved-episodes and saved-shows library, and `user-read-playback-position` for
-  resume points. The largest single gap by endpoint count. Deliberately skipped:
-  jamiew doesn't use Spotify for spoken word, and it would roughly double the
-  tool surface (`search_music` would need two more types, and the library tools
-  a third and fourth kind). Revisit only on a concrete need.
-- **`GET /me/following/contains` and the saved-`contains` family** — "is this
-  already saved/followed?" for tracks, albums, artists, playlists. We had a
-  `savedTracksContain` implementation for this and deleted it unused; the model
-  can answer the question from `get_saved_tracks` / `get_followed_artists`
-  without a dedicated tool. Worth adding only if we hit cases where it can't.
-- **Follow/unfollow *users*** (`type=user` on the same endpoints as artists) —
-  trivial to add on top of what just landed, but there's no workflow asking for it.
-- **`GET /playlists/{id}/images`** — reading a playlist's cover URL. Cheap, and
-  the natural counterpart to `set_playlist_cover`; skipped because nothing
-  currently consumes image URLs. Reconsider if we ever render playlists visually.
-- **Cursor pagination on `GET /me/following`** — it pages by `after`, not
-  `offset`, so `get_followed_artists` exposes `limit` only and tops out at 50.
-  Fine until someone follows more artists than that and wants the tail.
+A branch push opens CI but does not deploy: deployment is gated on `main` and
+`DEPLOY_ENABLED`. Do not publish, merge or deploy as part of a code-only update.
 
-Restricted-regime landmines, tracked here so they aren't rediscovered: Spotify
-removed `GET /artists/{id}/top-tracks`, all batch fetches (`GET /tracks`,
-`/albums`, `/artists`), `GET /browse/*`, and `GET /users/{id}` in the restricted
-regime. `get_tracks` tries the batch route and falls back to single fetches on 403, and
-saved *albums* is documented as Extended-Quota-only under restricted mode — so
-`get_saved_albums` / `save_albums` / `remove_saved_albums` are the tools most
-likely to disappear if this app ever flips.
+Verified on this update: `pnpm check` passes (86 workerd tests, seven Node auth
+tests, 680.15 KiB gzip). The actual `pnpm --silent stdio` process passes discovery,
+ping, competing-owner rejection, signout and missing-login checks with isolated
+synthetic tokens. Read-only live calls through the shared MCP core pass profile,
+per-type offset search, artist membership, bounded playlist pagination and playback
+state using an existing grant. The browser documentation renders on desktop/mobile.
+
+Fresh local Spotify consent and real upstream token rotation remain pre-deployment
+checks. The existing Python grant lacks some canonical scopes, and the new local
+entrypoint correctly refuses that incomplete grant rather than silently proceeding.
+PKCE callbacks and rotation are covered with simulated upstream responses, not a
+claim that a new Spotify login or deployed Worker refresh was exercised.
+
+## Remaining decisions
+
+- Migrate McpAgent/SDK v1 to the supported stateless handler/SDK v2 only after
+  defining a single authoritative upstream-token owner per grant and a tested
+  existing-grant migration. Account for simultaneous sessions and refresh rotation.
+- Configure canonical resource/audience binding and evaluate CIMD with safe
+  metadata fetching. Preserve deliberate legacy-client compatibility rather than
+  equating DCR support with current-protocol conformance.
+- Provide remote disconnect/data deletion and explicit grant/session revocation.
+  An allowlist edit is not complete data cleanup.
+- Add per-user/IP auth and tool abuse controls plus an app/developer quota budget
+  before expanding enrollment. Check Cloudflare-side controls, not source alone.
+- Confirm public MCP/AI use with Spotify. Its AI-input and analysis policy applies
+  beyond model training. Five-user Development Mode and organization-only extended
+  access criteria remain independent constraints, not bugs that code can remove.
+- Reconsider the existing recommendation issue only after policy clearance. Search
+  results are not Spotify's artist top-track ranking; model-generated suggestions
+  are not an official replacement for restricted recommendation APIs.
+- Port resources, additional prompts or playback confirmation if actual users need
+  them before retiring Python. Keep one canonical tool core rather than adding a
+  second implementation inside this repository.
+- Verify playback writes against an active device only with explicit permission;
+  do not play, pause or edit playlists during an unattended read-only smoke run.
+
+## Deliberately excluded surface
+
+Podcasts, audiobooks, chapters and resume points remain out of scope without a
+concrete workflow. Following users, playlist-image reads and followed-artist
+cursor pagination are separate needs, not automatic additions for endpoint parity.
+No new insight/analytics service or mixed Spotify/SoundCloud player is being built.
+Borrow SoundCloud's local/remote architecture, not its content or credentials.

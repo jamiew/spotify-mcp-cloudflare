@@ -2,6 +2,8 @@
 // index.ts so it can be driven in-process by tests with a fake Spotify.
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
+import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import {
 	addPlaylistTracks,
@@ -39,7 +41,6 @@ import {
 	removeSavedAlbums,
 	removeSavedTracks,
 	reorderPlaylistTracks,
-	type SearchType,
 	saveAlbums,
 	saveTracks,
 	search,
@@ -49,6 +50,7 @@ import {
 	unfollowPlaylist,
 	updatePlaylistDetails,
 } from "./endpoints";
+import { outputSchemas } from "./output-schemas";
 import {
 	isNoActiveDeviceError,
 	isPremiumRequiredError,
@@ -61,19 +63,20 @@ import {
 } from "./spotify";
 
 // Sent once at initialize. Covers what the tool descriptions can't say
-// individually: how the surface fits together, and which Spotify capabilities
-// are simply gone.
+// individually: how the surface fits together and where app access varies.
 export const INSTRUCTIONS = `Spotify for the signed-in user. Tracks, albums, artists and playlists are accepted as bare IDs, spotify: URIs or open.spotify.com links anywhere.
 
-Start from search_music to turn names into IDs. get_playlist returns zero-based positions, which reorder_playlist and remove_tracks_from_playlist need. Playback tools need Spotify Premium and an open device; if none is active, list_devices then transfer_playback.
+Start from search_music to turn names into IDs. get_playlist returns zero-based positions for reorder_playlist; removal by URI removes all occurrences. Use fetch_all for a bounded multi-page read. Playback tools need Spotify Premium and an open device; if none is active, list_devices then transfer_playback.
 
 The library splits by kind. Tracks: get_saved_tracks, save_tracks, remove_saved_tracks. Albums: get_saved_albums, save_albums, remove_saved_albums. Artists are followed rather than saved: get_followed_artists, follow_artists, unfollow_artists. Playlists too: follow_playlist, unfollow_playlist — and unfollowing one you own is how Spotify deletes it.
 
 get_tracks, get_artist and get_album each take up to 50 IDs (20 for albums) in one call. check_library says whether tracks or albums are saved and artists followed, so use it before a bulk save or follow instead of paging the library.
 
-For an artist, get_artist is the profile and get_artist_albums is the discography; Spotify no longer offers their top tracks, so use search_music with an artist: filter for those. set_playlist_cover replaces a playlist's artwork from a URL, which must serve a JPEG of at most 256 KB.
+For an artist, get_artist is the profile and get_artist_albums is the discography. Artist top tracks are not exposed here; search_music with an artist: filter returns matches, not an official top-track ranking. set_playlist_cover replaces a playlist's artwork from a URL, which must serve a JPEG of at most 256 KB.
 
-Spotify has withdrawn /recommendations, audio-features and related-artists from third-party apps, so there is no recommendation endpoint to call. Build suggestions from get_top_items and get_recently_played plus search_music instead.
+Spotify endpoint and field availability varies by app creation date, quota mode, scopes and account access. This server does not expose recommendations, audio features, audio analysis or related artists. Do not assume they were withdrawn for every app or that an AI recommendation workflow is permitted by Spotify's terms. Listening-history tools return observations, not a recommendation engine.
+
+Tool annotations are advisory, not enforced confirmation. remove_tracks_from_playlist asks for confirmation when the client supports form elicitation and stops on decline, cancellation or confirmation failure. Without form support it proceeds directly; the caller must obtain any needed user approval.
 
 Newly created playlists may read back as public even when created private; that is Spotify's reporting, not a failed write.`;
 
@@ -83,11 +86,14 @@ type ToolResult = {
 	isError?: boolean;
 };
 
-const ok = (structured: Record<string, unknown>): ToolResult => ({
-	content: [{ type: "text", text: JSON.stringify(structured) }],
+const ok = (
+	structured: Record<string, unknown>,
+	text = JSON.stringify(structured),
+): ToolResult => ({
+	content: [{ type: "text", text }],
 	structuredContent: structured,
 });
-const okText = (s: string): ToolResult => ({ content: [{ type: "text", text: s }] });
+const okText = (message: string): ToolResult => ok({ status: "success", message }, message);
 const toolError = (message: string): ToolResult => ({
 	content: [{ type: "text", text: message }],
 	isError: true,
@@ -170,20 +176,23 @@ async function fetchCoverAsBase64(url: string): Promise<string> {
 	return base64;
 }
 
+type ToolContext = RequestHandlerExtra<ServerRequest, ServerNotification>;
+
 /** Wraps a tool handler so thrown errors become friendly MCP error results. */
-function guard<A>(fn: (args: A) => Promise<ToolResult>): (args: A) => Promise<ToolResult> {
-	return async (args: A) => {
+function guard<A>(
+	fn: (args: A, extra: ToolContext) => Promise<ToolResult>,
+): (args: A, extra: ToolContext) => Promise<ToolResult> {
+	return async (args, extra) => {
 		try {
-			return await fn(args);
+			return await fn(args, extra);
 		} catch (e) {
 			return mapError(e);
 		}
 	};
 }
 
-// MCP behaviour hints, named by what they mean to a client deciding whether
-// to confirm with the user. Destructive means overwrites or deletes existing
-// data, not merely "writes".
+// Advisory MCP hints; clients decide how to use them. They do not enforce
+// confirmation. Destructive means overwrites or deletes existing data.
 const readOnly = { readOnlyHint: true, openWorldHint: false };
 const lookup = { readOnlyHint: true, openWorldHint: true };
 const additive = {
@@ -205,6 +214,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 				"Get the current user's Spotify profile. Some fields (email, country, product) are unavailable for newer Spotify apps.",
 			inputSchema: {},
 			annotations: readOnly,
+			outputSchema: outputSchemas.get_me,
 		},
 		guard(async () => {
 			const me = await getMe(sp());
@@ -234,11 +244,19 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.default(["track"])
 					.describe("Item types to search (default: track only)"),
 				limit: z.number().int().min(1).max(50).default(10).describe("Max results per type"),
+				offset: z
+					.number()
+					.int()
+					.min(0)
+					.max(1000)
+					.default(0)
+					.describe("Starting index per type; Spotify stops pagination at offset 1000"),
 			},
 			annotations: lookup,
+			outputSchema: outputSchemas.search_music,
 		},
-		guard(async ({ query, types, limit }) => {
-			const res = await search(sp(), query, types as SearchType[], limit);
+		guard(async ({ query, types, limit, offset }) => {
+			const res = await search(sp(), query, types, limit, offset);
 			return ok({
 				...(res.tracks ? { tracks: res.tracks.map(compactTrack) } : {}),
 				...(res.artists ? { artists: res.artists.map(compactArtist) } : {}),
@@ -261,6 +279,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.describe("Track IDs or spotify:track: URIs"),
 			},
 			annotations: lookup,
+			outputSchema: outputSchemas.get_tracks,
 		},
 		guard(async ({ ids }) => {
 			const tracks = await getTracks(sp(), ids);
@@ -270,7 +289,9 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					...(t.explicit != null ? { explicit: t.explicit } : {}),
 					...(t.track_number != null ? { track_number: t.track_number } : {}),
 					...(t.album?.id ? { album_id: t.album.id } : {}),
-					...(t.artists?.length ? { artist_ids: t.artists.map((a) => a.id).filter(Boolean) } : {}),
+					...(t.artists?.length
+						? { artist_ids: t.artists.map((a) => a.id).filter((id): id is string => Boolean(id)) }
+						: {}),
 				})),
 			});
 		}),
@@ -281,7 +302,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Artist details",
 			description:
-				"Get details for one or more artists (max 50 per call): name, genres, followers, popularity. Spotify no longer offers top tracks; use search_music with an artist: filter for those.",
+				"Get details for one or more artists (max 50 per call): name, genres, followers, popularity where available. Search with an artist: filter for matching tracks, not an official top-track ranking.",
 			inputSchema: {
 				ids: z
 					.array(z.string())
@@ -290,6 +311,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.describe("Artist IDs or spotify:artist: URIs"),
 			},
 			annotations: lookup,
+			outputSchema: outputSchemas.get_artist,
 		},
 		guard(async ({ ids }) => ok({ artists: (await getArtists(sp(), ids)).map(compactArtist) })),
 	);
@@ -310,6 +332,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 				offset: z.number().int().min(0).default(0),
 			},
 			annotations: lookup,
+			outputSchema: outputSchemas.get_artist_albums,
 		},
 		guard(async ({ id, include_groups, limit, offset }) => {
 			const page = await getArtistAlbums(sp(), id, {
@@ -335,6 +358,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.describe("Album IDs or spotify:album: URIs"),
 			},
 			annotations: lookup,
+			outputSchema: outputSchemas.get_album,
 		},
 		guard(async ({ ids }) => {
 			const albums = await getAlbums(sp(), ids);
@@ -361,6 +385,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 				offset: z.number().int().min(0).default(0),
 			},
 			annotations: readOnly,
+			outputSchema: outputSchemas.list_playlists,
 		},
 		guard(async ({ limit, offset }) => {
 			const page = await getMyPlaylists(sp(), { limit, offset });
@@ -377,22 +402,85 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Playlist contents",
 			description:
-				"Get a playlist's details and a page of its tracks, with zero-based positions (needed for reordering/removal). Unavailable and local tracks keep their position but have no id. Spotify only returns contents for playlists the user owns, collaborates on, or follows.",
+				"Get playlist details and one page of tracks, preserving zero-based positions for missing/local entries. fetch_all reads multiple pages up to max_items. Contents may be inaccessible depending on the app and playlist permissions; this is distinct from an empty playlist.",
 			inputSchema: {
 				playlist_id: z.string().describe("Playlist ID or spotify:playlist: URI"),
 				limit: z.number().int().min(1).max(50).default(50),
 				offset: z.number().int().min(0).default(0).describe("Index of the first track"),
+				fetch_all: z.boolean().default(false).describe("Read multiple pages, starting at offset"),
+				max_items: z
+					.number()
+					.int()
+					.min(1)
+					.max(10000)
+					.default(1000)
+					.describe(
+						"Maximum playlist positions for fetch_all (default 1000, maximum 10000); limit remains the page size",
+					),
 			},
 			annotations: lookup,
+			outputSchema: outputSchemas.get_playlist,
 		},
-		guard(async ({ playlist_id, limit, offset }) => {
-			const details = await getPlaylist(sp(), playlist_id);
-			const page = await getPlaylistTracks(sp(), playlist_id, { limit, offset });
+		guard(async ({ playlist_id, limit, offset, fetch_all, max_items }, extra) => {
+			const client = sp();
+			const details = await getPlaylist(client, playlist_id);
+			const tracks: z.infer<typeof outputSchemas.get_playlist>["tracks"] = [];
+			const cap = fetch_all ? max_items : limit;
+			let total = details.items?.total ?? details.tracks?.total ?? null;
+			let hasNext = false;
+			let inaccessible = false;
+			do {
+				extra.signal.throwIfAborted();
+				try {
+					const page = await getPlaylistTracks(client, playlist_id, {
+						limit: Math.min(limit, cap - tracks.length),
+						offset: offset + tracks.length,
+					});
+					total = page.total ?? total;
+					const remaining = cap - tracks.length;
+					const start = offset + tracks.length;
+					for (let index = 0; index < Math.min(page.tracks.length, remaining); index++) {
+						const track = page.tracks[index];
+						if (track) tracks.push({ position: start + index, ...compactTrack(track) });
+					}
+					hasNext = page.hasNext || page.tracks.length > remaining;
+					const progressToken = extra._meta?.progressToken;
+					if (fetch_all && progressToken !== undefined) {
+						await extra.sendNotification({
+							method: "notifications/progress",
+							params: {
+								progressToken,
+								progress: tracks.length,
+								...(total !== null
+									? { total: Math.max(tracks.length, Math.min(cap, Math.max(0, total - offset))) }
+									: {}),
+								message: `Fetched ${tracks.length} playlist positions.`,
+							},
+						});
+					}
+				} catch (error) {
+					if (!(error instanceof SpotifyApiError) || (error.status !== 403 && error.status !== 404))
+						throw error;
+					inaccessible = true;
+					break;
+				}
+			} while (fetch_all && hasNext && tracks.length < cap);
 			return ok({
 				playlist: compactPlaylist(details),
-				total_tracks: page.total,
+				total_tracks: total,
 				offset,
-				tracks: page.tracks.map((t, i) => ({ position: offset + i, ...compactTrack(t) })),
+				tracks,
+				contents_status: inaccessible ? "inaccessible" : "available",
+				returned: tracks.length,
+				next_offset: hasNext || inaccessible ? offset + tracks.length : null,
+				complete: !hasNext && !inaccessible,
+				truncated: hasNext && tracks.length >= cap,
+				...(inaccessible
+					? {
+							message:
+								"Spotify returned playlist metadata but denied access to contents. This does not mean the playlist is empty; check app access, permissions and playlist membership.",
+						}
+					: {}),
 			});
 		}),
 	);
@@ -412,6 +500,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.describe("Whether the playlist is collaborative (requires public=false)"),
 			},
 			annotations: additive,
+			outputSchema: outputSchemas.create_playlist,
 		},
 		guard(async ({ name, description, public: isPublic, collaborative }) => {
 			const playlist = await createPlaylist(sp(), {
@@ -436,6 +525,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 				public: z.boolean().optional().describe("New public state"),
 			},
 			annotations: destructive,
+			outputSchema: outputSchemas.update_playlist_details,
 		},
 		guard(async ({ playlist_id, name, description, public: isPublic }) => {
 			if (name === undefined && description === undefined && isPublic === undefined) {
@@ -470,6 +560,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.describe("Zero-based position to insert at (default: append)"),
 			},
 			annotations: additive,
+			outputSchema: outputSchemas.add_tracks_to_playlist,
 		},
 		guard(async ({ playlist_id, uris, position }) => {
 			const fullUris = uris.map((u) => toUri("track", u));
@@ -492,11 +583,44 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.describe("Track IDs or spotify:track: URIs to remove (all occurrences)"),
 			},
 			annotations: destructive,
+			outputSchema: outputSchemas.remove_tracks_from_playlist,
 		},
-		guard(async ({ playlist_id, uris }) => {
+		guard(async ({ playlist_id, uris }, extra) => {
 			const fullUris = uris.map((u) => toUri("track", u));
+			if (server.server.getClientCapabilities()?.elicitation?.form !== undefined) {
+				const response = await server.server.elicitInput(
+					{
+						mode: "form",
+						message: `Remove all occurrences of ${fullUris.length} track URI(s) from playlist ${playlist_id}?`,
+						requestedSchema: {
+							type: "object",
+							properties: {
+								confirm: { type: "boolean", title: "Confirm removal", default: false },
+							},
+							required: ["confirm"],
+						},
+					},
+					{ relatedRequestId: extra.requestId, signal: extra.signal },
+				);
+				if (response.action !== "accept" || response.content?.confirm !== true) {
+					return ok(
+						{ status: "cancelled", message: "Removal cancelled.", removed: 0 },
+						"Removal cancelled.",
+					);
+				}
+			}
+			extra.signal.throwIfAborted();
 			const snapshot = await removePlaylistTracks(sp(), playlist_id, fullUris);
-			return ok({ removed: fullUris.length, ...(snapshot ? { snapshot_id: snapshot } : {}) });
+			const message = `Removed all occurrences of ${fullUris.length} track URI(s).`;
+			return ok(
+				{
+					status: "success",
+					message,
+					removed: fullUris.length,
+					...(snapshot ? { snapshot_id: snapshot } : {}),
+				},
+				message,
+			);
 		}),
 	);
 
@@ -526,14 +650,21 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.min(1)
 					.default(1)
 					.describe("Number of consecutive tracks to move"),
+				snapshot_id: z
+					.string()
+					.min(1)
+					.optional()
+					.describe("Playlist snapshot from get_playlist to guard against concurrent edits"),
 			},
 			annotations: destructiveOnce,
+			outputSchema: outputSchemas.reorder_playlist,
 		},
-		guard(async ({ playlist_id, range_start, insert_before, range_length }) => {
+		guard(async ({ playlist_id, range_start, insert_before, range_length, snapshot_id }) => {
 			const snapshot = await reorderPlaylistTracks(sp(), playlist_id, {
 				rangeStart: range_start,
 				insertBefore: insert_before,
 				rangeLength: range_length,
+				...(snapshot_id !== undefined ? { snapshotId: snapshot_id } : {}),
 			});
 			return ok({ reordered: true, ...(snapshot ? { snapshot_id: snapshot } : {}) });
 		}),
@@ -555,6 +686,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 				idempotentHint: true,
 				openWorldHint: true,
 			},
+			outputSchema: outputSchemas.set_playlist_cover,
 		},
 		guard(async ({ playlist_id, image_url }) => {
 			if (!image_url.startsWith("https://")) {
@@ -572,6 +704,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			description: "Follow a playlist, adding it to the user's library.",
 			inputSchema: { playlist_id: z.string().describe("Playlist ID or URI") },
 			annotations: additiveIdempotent,
+			outputSchema: outputSchemas.follow_playlist,
 		},
 		guard(async ({ playlist_id }) => {
 			await followPlaylist(sp(), playlist_id);
@@ -587,6 +720,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 				"Unfollow (remove from your library) a playlist. For playlists you own this effectively deletes them.",
 			inputSchema: { playlist_id: z.string().describe("Playlist ID or URI") },
 			annotations: destructive,
+			outputSchema: outputSchemas.unfollow_playlist,
 		},
 		guard(async ({ playlist_id }) => {
 			await unfollowPlaylist(sp(), playlist_id);
@@ -604,6 +738,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 				offset: z.number().int().min(0).default(0),
 			},
 			annotations: readOnly,
+			outputSchema: outputSchemas.get_saved_tracks,
 		},
 		guard(async ({ limit, offset }) => {
 			const page = await getSavedTracks(sp(), { limit, offset });
@@ -631,6 +766,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.describe("Track IDs or spotify:track: URIs"),
 			},
 			annotations: additiveIdempotent,
+			outputSchema: outputSchemas.save_tracks,
 		},
 		guard(async ({ ids }) => {
 			await saveTracks(sp(), ids);
@@ -651,6 +787,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.describe("Track IDs or spotify:track: URIs"),
 			},
 			annotations: destructive,
+			outputSchema: outputSchemas.remove_saved_tracks,
 		},
 		guard(async ({ ids }) => {
 			await removeSavedTracks(sp(), ids);
@@ -668,6 +805,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 				offset: z.number().int().min(0).default(0),
 			},
 			annotations: readOnly,
+			outputSchema: outputSchemas.get_saved_albums,
 		},
 		guard(async ({ limit, offset }) => {
 			const page = await getSavedAlbums(sp(), { limit, offset });
@@ -695,6 +833,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.describe("Album IDs or spotify:album: URIs"),
 			},
 			annotations: additiveIdempotent,
+			outputSchema: outputSchemas.save_albums,
 		},
 		guard(async ({ ids }) => {
 			await saveAlbums(sp(), ids);
@@ -715,6 +854,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.describe("Album IDs or spotify:album: URIs"),
 			},
 			annotations: destructive,
+			outputSchema: outputSchemas.remove_saved_albums,
 		},
 		guard(async ({ ids }) => {
 			await removeSavedAlbums(sp(), ids);
@@ -729,6 +869,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			description: "List the artists the user follows.",
 			inputSchema: { limit: z.number().int().min(1).max(50).default(20) },
 			annotations: readOnly,
+			outputSchema: outputSchemas.get_followed_artists,
 		},
 		guard(async ({ limit }) => {
 			const page = await getFollowedArtists(sp(), { limit });
@@ -749,6 +890,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.describe("Artist IDs or spotify:artist: URIs"),
 			},
 			annotations: additiveIdempotent,
+			outputSchema: outputSchemas.follow_artists,
 		},
 		guard(async ({ ids }) => {
 			await followArtists(sp(), ids);
@@ -769,6 +911,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.describe("Artist IDs or spotify:artist: URIs"),
 			},
 			annotations: destructive,
+			outputSchema: outputSchemas.unfollow_artists,
 		},
 		guard(async ({ ids }) => {
 			await unfollowArtists(sp(), ids);
@@ -791,6 +934,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.describe("IDs or spotify: URIs of one kind"),
 			},
 			annotations: readOnly,
+			outputSchema: outputSchemas.check_library,
 		},
 		guard(async ({ kind, ids }) => {
 			if (ids.length > CONTAINS_MAX[kind]) {
@@ -816,11 +960,15 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 				"Get the current playback state: playing track, device, progress, shuffle/repeat.",
 			inputSchema: {},
 			annotations: readOnly,
+			outputSchema: outputSchemas.get_playback_state,
 		},
 		guard(async () => {
 			const state = await getPlaybackState(sp());
 			if (!state?.item) {
-				return okText("No active playback.");
+				return ok(
+					{ is_playing: false, track: null, message: "No active playback." },
+					"No active playback.",
+				);
 			}
 			return ok({
 				is_playing: state.is_playing,
@@ -892,6 +1040,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.describe("Target device ID (default: the currently active device)"),
 			},
 			annotations: additive,
+			outputSchema: outputSchemas.control_playback,
 		},
 		guard(async ({ action, context_uri, uris, position_ms, volume_percent, state, device_id }) => {
 			switch (action) {
@@ -945,11 +1094,12 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			description: "Get the current playback queue: now playing plus upcoming tracks.",
 			inputSchema: {},
 			annotations: readOnly,
+			outputSchema: outputSchemas.get_queue,
 		},
 		guard(async () => {
 			const q = await getQueue(sp());
 			return ok({
-				...(q.currently_playing ? { currently_playing: compactTrack(q.currently_playing) } : {}),
+				currently_playing: q.currently_playing ? compactTrack(q.currently_playing) : null,
 				queue: (q.queue ?? []).slice(0, 20).map(compactTrack),
 			});
 		}),
@@ -965,6 +1115,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 				device_id: z.string().optional().describe("Target device ID"),
 			},
 			annotations: additive,
+			outputSchema: outputSchemas.add_to_queue,
 		},
 		guard(async ({ uri, device_id }) => {
 			await addToQueue(sp(), uri, device_id);
@@ -979,6 +1130,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			description: "List the user's available Spotify devices.",
 			inputSchema: {},
 			annotations: readOnly,
+			outputSchema: outputSchemas.list_devices,
 		},
 		guard(async () => {
 			const devices = await getDevices(sp());
@@ -1004,6 +1156,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 				play: z.boolean().default(true).describe("Start playing after transfer"),
 			},
 			annotations: additiveIdempotent,
+			outputSchema: outputSchemas.transfer_playback,
 		},
 		guard(async ({ device_id, play }) => {
 			await transferPlayback(sp(), device_id, play);
@@ -1018,6 +1171,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			description: "List recently played tracks, most recent first.",
 			inputSchema: { limit: z.number().int().min(1).max(50).default(20) },
 			annotations: readOnly,
+			outputSchema: outputSchemas.get_recently_played,
 		},
 		guard(async ({ limit }) => {
 			const res = await getRecentlyPlayed(sp(), { limit });
@@ -1036,7 +1190,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Top artists and tracks",
 			description:
-				"Get the user's top artists or tracks over a time range - the measured foundation for taste profiling and recommendations.",
+				"Get the user's top artists or tracks over a time range, as reported by Spotify. Availability and optional fields depend on app access.",
 			inputSchema: {
 				type: z.enum(["artists", "tracks"]),
 				time_range: z
@@ -1046,6 +1200,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 				limit: z.number().int().min(1).max(50).default(20),
 			},
 			annotations: readOnly,
+			outputSchema: outputSchemas.get_top_items,
 		},
 		guard(async ({ type, time_range, limit }) => {
 			if (type === "artists") {
@@ -1057,15 +1212,15 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		}),
 	);
 
-	// Prompts carry the workflows that aren't obvious from the tool list —
-	// mostly ways to rebuild what Spotify withdrew from third-party apps.
+	// Prompts describe manual lookup and playlist workflows, not a substitute
+	// recommendation API or an assurance about Spotify policy compliance.
 	server.registerPrompt(
 		"discover_similar",
 		{
 			title: "Find similar artists",
 			description:
-				"Suggest artists similar to one you name, and offer to queue or save what looks good.",
-			argsSchema: { artist: z.string().describe("Artist to find neighbours for") },
+				"Look up artists the user identifies as similar; no related-artist ranking is provided.",
+			argsSchema: { artist: z.string().describe("Artist to use as the starting point") },
 		},
 		({ artist }) => ({
 			messages: [
@@ -1075,9 +1230,9 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 						type: "text",
 						text: `Find artists similar to ${artist}.
 
-Spotify's related-artists and /recommendations endpoints are gone for third-party apps, so work it out: get_artist for their genres, search_music with genre: and year: filters, and get_top_items to bias toward what I already listen to. Skip anything already in my top artists.
+This server does not expose related-artists or recommendations; endpoint access varies by Spotify app. Ask me which other artists or search terms I want to explore, then use search_music and get_artist for factual lookup. Do not describe search matches as a Spotify similarity or popularity ranking or assume AI recommendation use is permitted by Spotify's terms.
 
-Give me 8-10 artists with one line each on why, plus a representative track. Then ask whether to save them or build a playlist.`,
+Show the matching names and available metadata, then ask before saving or building a playlist.`,
 					},
 				},
 			],
@@ -1104,7 +1259,7 @@ Give me 8-10 artists with one line each on why, plus a representative track. The
 						type: "text",
 						text: `Profile my listening over ${time_range ?? "medium_term"}.
 
-Use get_top_items for both artists and tracks, plus get_recently_played. Tell me the genres and moods that dominate, what has changed lately versus the longer ranges, and two or three blind spots worth exploring. Be specific and skip the flattery.`,
+Use get_top_items for both artists and tracks, plus get_recently_played. Summarise only the returned names, ordering and time ranges. Do not infer moods, missing listening history or recommendations from these limited observations, and do not assume additional profiling is permitted by Spotify's terms.`,
 					},
 				},
 			],
@@ -1115,7 +1270,7 @@ Use get_top_items for both artists and tracks, plus get_recently_played. Tell me
 		"build_playlist",
 		{
 			title: "Build a playlist",
-			description: "Assemble and create a playlist from a described vibe.",
+			description: "Look up user-selected tracks and create a playlist after approval.",
 			argsSchema: {
 				vibe: z.string().describe("What the playlist is for, e.g. 'rainy sunday morning'"),
 				size: z.string().optional().describe("Number of tracks (default 20)"),
@@ -1129,7 +1284,7 @@ Use get_top_items for both artists and tracks, plus get_recently_played. Tell me
 						type: "text",
 						text: `Build me a playlist for: ${vibe}. Around ${size ?? "20"} tracks.
 
-Draw on get_top_items and get_recently_played so it sounds like me, then search_music to fill the gaps. Show the tracklist and wait for my go-ahead before create_playlist and add_tracks_to_playlist. Create it private unless I say otherwise.`,
+Ask me for the tracks, artists or search terms I want included. Use search_music for factual catalog lookup, not as an official ranking or recommendation engine. Show the tracklist and wait for my go-ahead before create_playlist and add_tracks_to_playlist. Create it private unless I say otherwise. Do not assume an AI recommendation workflow is permitted by Spotify's terms.`,
 					},
 				},
 			],

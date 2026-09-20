@@ -137,4 +137,20 @@ describe("refreshSpotifyToken", () => {
 		});
 		expect(tokens.refreshToken).toBeUndefined();
 	});
+
+	it("preserves invalid_grant without exposing upstream private details", async () => {
+		fakeTokenEndpoint(400, {
+			error: "invalid_grant",
+			error_description: "SYNTHETIC_PRIVATE_DETAIL",
+		});
+		const failure = await refreshSpotifyToken({
+			clientId: "cid",
+			clientSecret: "secret",
+			refreshToken: "rt",
+		}).catch((error: unknown) => error);
+		expect(failure).toBeInstanceOf(Error);
+		if (!(failure instanceof Error)) throw new Error("Expected OAuth failure");
+		expect(failure.message).toContain("invalid_grant");
+		expect(failure.message).not.toContain("SYNTHETIC_PRIVATE_DETAIL");
+	});
 });

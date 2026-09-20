@@ -5,7 +5,7 @@
 //   pnpm e2e                       # against the deployed worker
 //   E2E_SERVER=http://127.0.0.1:8788 pnpm e2e   # against wrangler dev
 import { spawn } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
@@ -30,7 +30,8 @@ function loadCache(): Cache {
 }
 
 function saveCache(cache: Cache) {
-	writeFileSync(AUTH_CACHE, JSON.stringify(cache, null, 2));
+	writeFileSync(AUTH_CACHE, JSON.stringify(cache, null, 2), { mode: 0o600 });
+	chmodSync(AUTH_CACHE, 0o600);
 }
 
 const cache = loadCache();
@@ -90,7 +91,7 @@ function waitForCallbackCode(): Promise<string> {
 			if (code) resolve(code);
 			else reject(new Error(`authorization failed: ${error ?? "no code in callback"}`));
 		});
-		server.listen(CALLBACK_PORT);
+		server.listen(CALLBACK_PORT, "127.0.0.1");
 		setTimeout(() => {
 			server.close();
 			reject(new Error("timed out waiting for browser authorization (120s)"));
@@ -156,14 +157,13 @@ async function main() {
 	console.log("  connected (OAuth ok)");
 
 	const tools = await client.listTools();
-	check("lists 24 tools", tools.tools.length === 24, tools.tools.length);
 	const names = tools.tools.map((t) => t.name);
 	for (const expected of ["search_music", "get_playlist", "control_playback", "get_top_items"]) {
 		check(`tool registered: ${expected}`, names.includes(expected));
 	}
 
 	const me = structured(await client.callTool({ name: "get_me", arguments: {} }));
-	check("get_me returns a user id", typeof me?.id === "string", me?.id);
+	check("get_me returns a user id", typeof me?.id === "string");
 
 	const searchRes = structured(
 		await client.callTool({
@@ -174,7 +174,9 @@ async function main() {
 	check(
 		"search_music returns tracks + artists",
 		Array.isArray(searchRes?.tracks) && Array.isArray(searchRes?.artists),
-		searchRes?.tracks?.[0]?.name,
+		searchRes
+			? { tracks: searchRes.tracks?.length, artists: searchRes.artists?.length }
+			: undefined,
 	);
 
 	const playlists = structured(
@@ -194,16 +196,14 @@ async function main() {
 
 	// May legitimately be "No active playback." (plain text, no structure)
 	const playback = await client.callTool({ name: "get_playback_state", arguments: {} });
-	check("get_playback_state answers", playback.isError !== true, structured(playback) ?? "idle");
+	check("get_playback_state answers", playback.isError !== true);
 
 	const top = structured(
 		await client.callTool({ name: "get_top_items", arguments: { type: "artists", limit: 3 } }),
 	);
-	check(
-		"get_top_items returns artists",
-		Array.isArray(top?.artists),
-		top?.artists?.map((a: { name: string }) => a.name),
-	);
+	check("get_top_items returns artists", Array.isArray(top?.artists), {
+		count: top?.artists?.length,
+	});
 
 	await client.close();
 	console.log(failures === 0 ? "\nall checks passed" : `\n${failures} check(s) FAILED`);
