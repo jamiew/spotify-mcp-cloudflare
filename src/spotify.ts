@@ -32,8 +32,10 @@ export class RateLimitedError extends Error {
 	) {
 		super(
 			quotaExceeded
-				? "Spotify's daily API quota for this developer account is used up. Retrying will not help; it resets within 24 hours."
-				: "Spotify is rate limiting right now. Wait a moment and try again.",
+				? "Spotify's API quota for this developer account is exhausted. Stop retrying; all its Development Mode apps share this quota."
+				: retryAfterSeconds !== undefined
+					? `Spotify is rate limiting. Retry after ${retryAfterSeconds} seconds.`
+					: "Spotify is rate limiting right now. Wait a moment and try again.",
 		);
 		this.name = "RateLimitedError";
 	}
@@ -82,7 +84,7 @@ export interface SpotifyClientOptions {
 	apiBaseUrl?: string;
 	fetchImpl?: typeof fetch;
 	maxRateLimitRetries?: number;
-	/** Never sleep longer than this per 429, in seconds. */
+	/** Surface longer Retry-After values instead of retrying before Spotify permits. */
 	maxRetryAfterSeconds?: number;
 	sleep?: (ms: number) => Promise<void>;
 }
@@ -190,14 +192,14 @@ export class SpotifyClient {
 				if ((await this.extractReason(response))?.toUpperCase().includes("QUOTA_EXCEEDED")) {
 					throw new RateLimitedError(this.retryAfterSeconds(response), true);
 				}
-				if (rateLimitRetries >= this.maxRateLimitRetries) {
-					throw new RateLimitedError(this.retryAfterSeconds(response));
+				const waitSeconds = this.retryAfterSeconds(response) ?? 1;
+				if (
+					rateLimitRetries >= this.maxRateLimitRetries ||
+					waitSeconds > this.maxRetryAfterSeconds
+				) {
+					throw new RateLimitedError(waitSeconds);
 				}
 				rateLimitRetries += 1;
-				const waitSeconds = Math.min(
-					this.retryAfterSeconds(response) ?? 1,
-					this.maxRetryAfterSeconds,
-				);
 				await this.sleep(waitSeconds * 1000);
 				continue;
 			}

@@ -2,7 +2,12 @@
 
 ## Unreleased
 
-- A 429 carrying `QUOTA_EXCEEDED` is no longer retried; quota is per developer account and cannot clear by waiting, so the tool reports it as such (#2).
+- Local stdio and the existing Worker share the canonical TypeScript tool/API core; explicit PKCE login stores private, atomically replaced tokens with refresh rotation and single-owner locking.
+- Tools publish output schemas, accept search offsets and snapshot guards, and support bounded playlist pagination with progress. Playlist removal uses form elicitation when the client supports it.
+- Long `Retry-After` values are surfaced rather than shortened; quota errors no longer promise an undocumented daily reset.
+- Upstream OAuth error bodies are not exposed to callers or logs; revoked grants still trigger reauthorization.
+- Documentation records the [July quota update](https://developer.spotify.com/blog/2026-07-23-web-api-quota-updates), [postponed endpoint rollout](https://developer.spotify.com/blog/2026-02-06-update-on-developer-access-and-platform-security), remaining Python differences and [AI/public-hosting policy constraints](https://developer.spotify.com/policy). No public enrollment, SDK major migration or production deployment is implied.
+- A 429 carrying `QUOTA_EXCEEDED` is no longer retried; quota is shared per developer account, so an exhausted quota is surfaced immediately (#2).
 - The `ALLOWED_EMAILS` allowlist also matches Spotify's immutable `account_id` (#3).
 - Local redirect URIs use `127.0.0.1`; Spotify rejects `localhost` (#8).
 - `.mcp.json` registers the deployed server for anyone running Claude Code in a clone (#9).

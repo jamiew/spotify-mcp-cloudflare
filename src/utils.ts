@@ -5,7 +5,7 @@ import { z } from "zod";
 export const SPOTIFY_AUTH_URL = "https://accounts.spotify.com/authorize";
 export const SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token";
 
-/** Scopes requested from Spotify. Mirrors the original stdio server. */
+/** Canonical upstream scopes shared by the local and remote entrypoints. */
 export const SPOTIFY_SCOPES = [
 	"playlist-read-private",
 	"playlist-read-collaborative",
@@ -124,7 +124,14 @@ async function requestToken(
 		body: new URLSearchParams(body).toString(),
 	});
 	if (!resp.ok) {
-		throw new Error(`Spotify token request failed (${resp.status}): ${await resp.text()}`);
+		// Preserve only the signal used to request reauthorization, never an
+		// upstream description/body that may contain private account details.
+		const invalidGrant = z
+			.object({ error: z.literal("invalid_grant") })
+			.safeParse(await resp.json().catch(() => null)).success;
+		throw new Error(
+			`Spotify token request failed (${resp.status})${invalidGrant ? ": invalid_grant" : ""}`,
+		);
 	}
 	return tokenResponseSchema.parse(await resp.json());
 }

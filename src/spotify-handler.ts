@@ -183,10 +183,9 @@ app.get("/callback", async (c) => {
 			code,
 			redirectUri: new URL("/callback", c.req.url).href,
 		});
-	} catch (error) {
-		console.error("Token exchange error:", error);
-		const message = error instanceof Error ? error.message : String(error);
-		return c.text(`Token exchange failed: ${message}`, 500);
+	} catch {
+		console.error("Spotify token exchange failed");
+		return c.text("Spotify token exchange failed. Reconnect and try again.", 502);
 	}
 
 	// Fetch the user's profile to label the grant.
@@ -194,7 +193,7 @@ app.get("/callback", async (c) => {
 		headers: { Authorization: `Bearer ${tokens.accessToken}` },
 	});
 	if (!meResp.ok) {
-		return c.text(`Failed to fetch Spotify profile: ${await meResp.text()}`, 500);
+		return c.text("Could not read the Spotify profile. Reconnect and try again.", 502);
 	}
 	const meParsed = currentUserSchema.safeParse(await meResp.json());
 	if (!meParsed.success) {

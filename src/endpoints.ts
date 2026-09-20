@@ -1,9 +1,14 @@
-// Typed endpoint functions for verified-alive Spotify endpoints, with
-// restricted-vs-legacy regime fallback where the Feb 2026 migration moved
-// things. Dead endpoints (recommendations, audio-features, audio-analysis)
-// are deliberately not exposed.
+// Typed endpoint functions with restricted-vs-legacy fallback where Spotify's
+// 2026 migration moved things. Availability depends on the app and access mode.
+// Recommendations, audio features and audio analysis are not exposed here.
 
 import type { z } from "zod";
+import type {
+	compactAlbumSchema,
+	compactArtistSchema,
+	compactPlaylistSchema,
+	compactTrackSchema,
+} from "./output-schemas";
 import { type SpotifyClient, toId, toUri } from "./spotify";
 import {
 	type Album,
@@ -51,15 +56,19 @@ async function searchOne<T>(
 	query: string,
 	type: SearchType,
 	limit: number,
+	startOffset: number,
 	pick: (page: z.infer<typeof searchResponseSchema>) => { items: (T | null)[]; next?: unknown },
 ): Promise<T[]> {
 	const items = await client.paginate<T | null>(
 		async (pageLimit, offset) => {
 			const page = await client.request("/search", searchResponseSchema, {
-				query: { q: query, type, limit: pageLimit, offset },
+				query: { q: query, type, limit: pageLimit, offset: startOffset + offset },
 			});
 			const bucket = pick(page);
-			return { items: bucket.items, hasNext: bucket.next != null };
+			return {
+				items: bucket.items,
+				hasNext: bucket.next != null && startOffset + offset + bucket.items.length <= 1000,
+			};
 		},
 		{ total: limit, perRequest: SEARCH_PER_REQUEST_CAP },
 	);
@@ -79,30 +88,31 @@ export async function search(
 	query: string,
 	types: SearchType[],
 	limit: number,
+	offset = 0,
 ): Promise<SearchResults> {
 	const out: SearchResults = {};
 	for (const type of types) {
 		switch (type) {
 			case "track":
-				out.tracks = await searchOne(client, query, type, limit, (p) => ({
+				out.tracks = await searchOne(client, query, type, limit, offset, (p) => ({
 					items: p.tracks?.items ?? [],
 					next: p.tracks?.next,
 				}));
 				break;
 			case "artist":
-				out.artists = await searchOne(client, query, type, limit, (p) => ({
+				out.artists = await searchOne(client, query, type, limit, offset, (p) => ({
 					items: p.artists?.items ?? [],
 					next: p.artists?.next,
 				}));
 				break;
 			case "album":
-				out.albums = await searchOne(client, query, type, limit, (p) => ({
+				out.albums = await searchOne(client, query, type, limit, offset, (p) => ({
 					items: p.albums?.items ?? [],
 					next: p.albums?.next,
 				}));
 				break;
 			case "playlist":
-				out.playlists = await searchOne(client, query, type, limit, (p) => ({
+				out.playlists = await searchOne(client, query, type, limit, offset, (p) => ({
 					items: p.playlists?.items ?? [],
 					next: p.playlists?.next,
 				}));
@@ -270,10 +280,15 @@ export async function getPlaylistTracks(
 	client: SpotifyClient,
 	id: string,
 	options: { limit?: number; offset?: number } = {},
-): Promise<{ tracks: Track[]; addedAt: (string | null)[]; total: number | null }> {
+): Promise<{
+	tracks: Track[];
+	addedAt: (string | null)[];
+	total: number | null;
+	hasNext: boolean;
+}> {
 	const pid = encodeURIComponent(toId(id));
 	const query = { limit: options.limit ?? 50, offset: options.offset ?? 0 };
-	const schema = pagingSchema(playlistEntrySchema);
+	const schema = pagingSchema(playlistEntrySchema.nullable());
 	const page = await client.withFallback(
 		"playlist-items",
 		() => client.request(`/playlists/${pid}/items`, schema, { query }),
@@ -282,13 +297,30 @@ export async function getPlaylistTracks(
 	const tracks: Track[] = [];
 	const addedAt: (string | null)[] = [];
 	for (const entry of page.items) {
-		const track = entry.item ?? entry.track;
+		const track = entry?.item ?? entry?.track;
 		// A null entry is a removed or region-locked track, or a local file. Keep
 		// its slot so positions stay aligned for reorder and remove.
-		tracks.push(track ?? { name: "Unavailable", is_local: entry.is_local ?? false });
-		addedAt.push(entry.added_at ?? null);
+		tracks.push(
+			track
+				? entry?.is_local && !track.is_local
+					? { ...track, is_local: true }
+					: track
+				: { name: "Unavailable", is_local: entry?.is_local ?? false },
+		);
+		addedAt.push(entry?.added_at ?? null);
 	}
-	return { tracks, addedAt, total: page.total ?? null };
+	const hasNext =
+		page.next !== undefined
+			? page.next !== null
+			: page.total != null
+				? query.offset + tracks.length < page.total
+				: tracks.length === query.limit;
+	if (hasNext && tracks.length === 0) {
+		throw new Error(
+			"Spotify returned an empty playlist page while reporting more items. Retry the read.",
+		);
+	}
+	return { tracks, addedAt, total: page.total ?? null, hasNext };
 }
 
 /** Restricted moved playlist creation from /users/{id}/playlists to /me/playlists. */
@@ -374,13 +406,14 @@ export async function removePlaylistTracks(
 export async function reorderPlaylistTracks(
 	client: SpotifyClient,
 	playlistId: string,
-	options: { rangeStart: number; insertBefore: number; rangeLength?: number },
+	options: { rangeStart: number; insertBefore: number; rangeLength?: number; snapshotId?: string },
 ): Promise<string | null> {
 	const pid = encodeURIComponent(toId(playlistId));
 	const body = {
 		range_start: options.rangeStart,
 		insert_before: options.insertBefore,
 		range_length: options.rangeLength ?? 1,
+		...(options.snapshotId !== undefined ? { snapshot_id: options.snapshotId } : {}),
 	};
 	const res = await client.withFallback(
 		"playlist-items",
@@ -714,7 +747,7 @@ export function transferPlayback(
 
 // --- Compact output mappers: keep tool results small for the model ---
 
-export function compactTrack(track: Track): Record<string, unknown> {
+export function compactTrack(track: Track): z.infer<typeof compactTrackSchema> {
 	return {
 		...(track.id ? { id: track.id } : {}),
 		name: track.name,
@@ -726,7 +759,7 @@ export function compactTrack(track: Track): Record<string, unknown> {
 	};
 }
 
-export function compactPlaylist(p: Playlist): Record<string, unknown> {
+export function compactPlaylist(p: Playlist): z.infer<typeof compactPlaylistSchema> {
 	return {
 		id: p.id,
 		name: p.name,
@@ -738,7 +771,7 @@ export function compactPlaylist(p: Playlist): Record<string, unknown> {
 	};
 }
 
-export function compactArtist(a: Artist): Record<string, unknown> {
+export function compactArtist(a: Artist): z.infer<typeof compactArtistSchema> {
 	return {
 		id: a.id,
 		name: a.name,
@@ -748,7 +781,7 @@ export function compactArtist(a: Artist): Record<string, unknown> {
 	};
 }
 
-export function compactAlbum(a: SimplifiedAlbum): Record<string, unknown> {
+export function compactAlbum(a: SimplifiedAlbum): z.infer<typeof compactAlbumSchema> {
 	return {
 		id: a.id,
 		name: a.name,
