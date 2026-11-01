@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Reconnect once after upgrading.** The server now asks for `user-read-playback-position` so episode lists can include resume points. Remote users reconnect the MCP server; local users run `pnpm run login` again.
+- Podcast and audiobook library tools, matching the Python edition: `get_saved_shows`, `save_shows`, `remove_saved_shows`, `get_show_episodes` (with resume points), `get_saved_episodes`, `save_episodes`, `remove_saved_episodes`, `get_saved_audiobooks`, `save_audiobooks` and `remove_saved_audiobooks`. `check_library` takes `show`, `episode` and `audiobook`. Writes use `/me/library` and fall back to the legacy per-kind routes like the other library writes.
+- `get_playback_state` and `get_queue` describe a playing podcast episode (`type: "episode"`, the show as `artist`) instead of `track: null`.
+- `control_playback play` and `add_to_queue` keep episode URIs and links. A bare ID is still a track. Albums, shows, artists and playlists are refused as items, with a pointer to `context_uri`.
+
 ## 2026-11-01 — 0.7.2
 
 - `get_playlist` no longer fails on a playlist that holds a podcast episode. It now asks Spotify for episodes and lists them with `type: "episode"` and the podcast name as the artist.

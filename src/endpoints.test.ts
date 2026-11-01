@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
 	addToQueue,
+	compactEpisode,
 	compactPlaylist,
 	compactTrack,
 	controlPlayback,
@@ -9,9 +10,13 @@ import {
 	followArtists,
 	getAlbums,
 	getArtists,
+	getPlaybackState,
 	getPlaylistTracks,
 	getSavedAlbums,
+	getSavedAudiobooks,
+	getSavedShows,
 	getSavedTracks,
+	getShowEpisodes,
 	getTracks,
 	libraryContains,
 	removePlaylistTracks,
@@ -19,6 +24,7 @@ import {
 	saveTracks,
 	search,
 	setPlaylistCover,
+	writeMediaLibrary,
 } from "./endpoints";
 import { fakeSpotify, type SeenRequest, staticTokens } from "./fake-spotify";
 import { SpotifyClient } from "./spotify";
@@ -336,6 +342,18 @@ describe("libraryContains", () => {
 			"/v1/me/albums/contains?ids=al1%2Cal2",
 		]);
 	});
+
+	it("uses the legacy per-kind route for shows, episodes and audiobooks", async () => {
+		const { client, seen } = makeClient({
+			"GET /v1/me/library/contains": notFound,
+			"GET /v1/me/episodes/contains": () => Response.json([true]),
+		});
+		expect(await libraryContains(client, "episode", ["spotify:episode:e1"])).toEqual([true]);
+		expect(seen.map((s) => `${s.path}?${s.query}`)).toEqual([
+			"/v1/me/library/contains?uris=spotify%3Aepisode%3Ae1",
+			"/v1/me/episodes/contains?ids=e1",
+		]);
+	});
 });
 
 describe("removePlaylistTracks", () => {
@@ -523,6 +541,132 @@ describe("followArtists", () => {
 		expect(seen[0]?.query.get("uris")).toBe("spotify:artist:a1,spotify:artist:a2");
 		expect(seen[1]?.body).toEqual({ ids: ["a1", "a2"] });
 		expect(seen[1]?.query.get("type")).toBe("artist");
+	});
+});
+
+describe("writeMediaLibrary", () => {
+	it("sends uris to /me/library in the restricted regime", async () => {
+		const { client, seen } = makeClient({
+			"PUT /v1/me/library": () => new Response(null, { status: 200 }),
+		});
+		await writeMediaLibrary(client, "PUT", "show", ["s1", "https://open.spotify.com/show/s2"]);
+		expect(seen.map((s) => `${s.method} ${s.path}?${s.query}`)).toEqual([
+			"PUT /v1/me/library?uris=spotify%3Ashow%3As1%2Cspotify%3Ashow%3As2",
+		]);
+		expect(seen[0]?.body).toBeUndefined();
+	});
+
+	it("falls back to the legacy per-kind route with ids in the query", async () => {
+		const { client, seen } = makeClient({
+			"DELETE /v1/me/library": notFound,
+			"DELETE /v1/me/audiobooks": () => new Response(null, { status: 200 }),
+		});
+		await writeMediaLibrary(client, "DELETE", "audiobook", ["b1", "spotify:audiobook:b2"]);
+		expect(seen.map((s) => `${s.method} ${s.path}?${s.query}`)).toEqual([
+			"DELETE /v1/me/library?uris=spotify%3Aaudiobook%3Ab1%2Cspotify%3Aaudiobook%3Ab2",
+			"DELETE /v1/me/audiobooks?ids=b1%2Cb2",
+		]);
+		expect(seen[1]?.body).toBeUndefined();
+	});
+});
+
+describe("podcast and audiobook reads", () => {
+	it("normalizes legacy show and restricted item entries", async () => {
+		const { client } = makeClient({
+			"GET /v1/me/shows": () =>
+				Response.json({
+					items: [
+						{ added_at: "2023-01-01", show: { id: "s1", name: "Legacy Shape" } },
+						{ added_at: "2024-01-01", item: { id: "s2", name: "Restricted Shape" } },
+					],
+					total: 2,
+				}),
+		});
+		const res = await getSavedShows(client);
+		expect(res.items.map((i) => [i.show.name, i.addedAt])).toEqual([
+			["Legacy Shape", "2023-01-01"],
+			["Restricted Shape", "2024-01-01"],
+		]);
+	});
+
+	it("accepts saved audiobooks bare, as documented, or wrapped like other saved lists", async () => {
+		const { client } = makeClient({
+			"GET /v1/me/audiobooks": () =>
+				Response.json({
+					items: [
+						{ id: "b1", name: "Bare", authors: [{ name: "Author" }] },
+						{ added_at: "2024-01-01", audiobook: { id: "b2", name: "Wrapped" } },
+					],
+					total: 2,
+				}),
+		});
+		const res = await getSavedAudiobooks(client);
+		expect(res.items.map((i) => [i.audiobook.name, i.addedAt])).toEqual([
+			["Bare", null],
+			["Wrapped", "2024-01-01"],
+		]);
+	});
+
+	it("reads a show's episodes with resume points and skips null entries", async () => {
+		const { client, seen } = makeClient({
+			"GET /v1/shows/s1/episodes": () =>
+				Response.json({
+					items: [
+						{
+							id: "e1",
+							name: "Pilot",
+							release_date: "2024-05-01",
+							duration_ms: 3000,
+							resume_point: { resume_position_ms: 1200, fully_played: false },
+						},
+						null,
+					],
+					total: 2,
+				}),
+		});
+		const res = await getShowEpisodes(client, "spotify:show:s1", { limit: 10 });
+		expect(res.items.map(compactEpisode)).toEqual([
+			{
+				id: "e1",
+				name: "Pilot",
+				released: "2024-05-01",
+				duration_ms: 3000,
+				resume_position_ms: 1200,
+				fully_played: false,
+			},
+		]);
+		expect(seen[0]?.query.get("limit")).toBe("10");
+	});
+});
+
+describe("episode playback", () => {
+	it("asks the player for episodes too", async () => {
+		const { client, seen } = makeClient({
+			"GET /v1/me/player": () => new Response(null, { status: 204 }),
+		});
+		await getPlaybackState(client);
+		expect(seen[0]?.query.get("additional_types")).toBe("track,episode");
+	});
+
+	it("keeps episode uris for play and queue, and rejects non-playable items unsent", async () => {
+		const { client, seen } = makeClient({
+			"PUT /v1/me/player/play": () => new Response(null, { status: 204 }),
+			"POST /v1/me/player/queue": () => new Response(null, { status: 204 }),
+		});
+		await controlPlayback(client, {
+			action: "play",
+			uris: ["spotify:episode:e1", "https://open.spotify.com/episode/e2", "t1"],
+		});
+		await addToQueue(client, "https://open.spotify.com/episode/e3?si=x");
+		expect(seen[0]?.body).toEqual({
+			uris: ["spotify:episode:e1", "spotify:episode:e2", "spotify:track:t1"],
+		});
+		expect(seen[1]?.query.get("uri")).toBe("spotify:episode:e3");
+		await expect(addToQueue(client, "spotify:album:al1")).rejects.toThrow(/context_uri/);
+		await expect(
+			controlPlayback(client, { action: "play", uris: ["https://open.spotify.com/show/s1"] }),
+		).rejects.toThrow(/context_uri/);
+		expect(seen).toHaveLength(2);
 	});
 });
 

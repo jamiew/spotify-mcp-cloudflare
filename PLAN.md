@@ -12,12 +12,11 @@ here. The [Python classic edition](https://github.com/jamiew/spotify-mcp) remain
 supported, with selected compatibility fixes ported back. Do not remove it just
 because both projects have the same version number.
 
-The canonical surface keeps 34 tools and three prompts. This update brings over
-output schemas, explicit search offset, snapshot-guarded reordering, bounded
-playlist pagination/progress and client-supported removal elicitation. Python
-still has resources, two additional prompts, best-effort playback confirmation,
-and podcast, episode and audiobook library tools with episodes in playback,
-queue and playlist reads.
+The canonical surface has 44 tools and three prompts. It matches the Python
+edition's podcast, episode and audiobook library tools (membership checks fold
+into `check_library`) and describes episodes in playback, queue and playlist
+reads. Python still has resources, two additional prompts and best-effort
+playback confirmation.
 Public names and result shapes differ; this is not a drop-in client migration.
 
 The Worker remains on McpAgent and MCP SDK v1 for this pass. Changing the token
@@ -97,8 +96,8 @@ Playback and queue writes remain intentionally untested without explicit permiss
 
 ## Deliberately excluded surface
 
-Podcasts, audiobooks, chapters and resume points remain out of scope without a
-concrete workflow. Following users, playlist-image reads and followed-artist
-cursor pagination are separate needs, not automatic additions for endpoint parity.
+Audiobook chapters remain out of scope without a concrete workflow. Following
+users, playlist-image reads and followed-artist cursor pagination are separate
+needs, not automatic additions for endpoint parity.
 No new insight/analytics service or mixed Spotify/SoundCloud player is being built.
 Borrow SoundCloud's local/remote architecture, not its content or credentials.

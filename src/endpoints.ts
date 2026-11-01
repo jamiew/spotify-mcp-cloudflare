@@ -6,13 +6,17 @@ import type { z } from "zod";
 import type {
 	compactAlbumSchema,
 	compactArtistSchema,
+	compactAudiobookSchema,
+	compactEpisodeSchema,
 	compactPlaylistSchema,
+	compactShowSchema,
 	compactTrackSchema,
 } from "./output-schemas";
-import { type SpotifyClient, toId, toUri } from "./spotify";
+import { type SpotifyClient, toId, toPlayableUri, toUri } from "./spotify";
 import {
 	type Album,
 	type Artist,
+	type Audiobook,
 	albumSchema,
 	artistSchema,
 	batchAlbumsSchema,
@@ -23,6 +27,8 @@ import {
 	currentUserSchema,
 	type Device,
 	devicesResponseSchema,
+	type Episode,
+	episodeSchema,
 	followedArtistsSchema,
 	type PlaybackState,
 	type Playlist,
@@ -32,8 +38,12 @@ import {
 	playlistSchema,
 	queueSchema,
 	recentlyPlayedSchema,
+	type Show,
 	type SimplifiedAlbum,
 	savedAlbumSchema,
+	savedAudiobookSchema,
+	savedEpisodeSchema,
+	savedShowSchema,
 	savedTrackSchema,
 	searchResponseSchema,
 	simplifiedAlbumSchema,
@@ -194,14 +204,22 @@ export function getAlbums(client: SpotifyClient, ids: string[]): Promise<Album[]
 	);
 }
 
-export type LibraryKind = "track" | "album" | "artist";
+export type MediaKind = "show" | "episode" | "audiobook";
+export type LibraryKind = "track" | "album" | "artist" | MediaKind;
 
 /** Restricted caps `/me/library/contains` at 40 URIs; legacy albums stop at 20. */
-export const CONTAINS_MAX = { track: 40, album: 20, artist: 40 };
+export const CONTAINS_MAX = {
+	track: 40,
+	album: 20,
+	artist: 40,
+	show: 40,
+	episode: 40,
+	audiobook: 40,
+};
 
 /**
- * Restricted folded the three contains routes into /me/library/contains, keyed
- * by URI; legacy keeps one route per kind, keyed by id.
+ * Restricted folded the per-kind contains routes into /me/library/contains,
+ * keyed by URI; legacy keeps one route per kind, keyed by id.
  */
 export function libraryContains(
 	client: SpotifyClient,
@@ -209,11 +227,10 @@ export function libraryContains(
 	ids: string[],
 ): Promise<boolean[]> {
 	const bare = ids.map(toId);
-	const legacy = {
-		track: { path: "/me/tracks/contains", query: {} },
-		album: { path: "/me/albums/contains", query: {} },
-		artist: { path: "/me/following/contains", query: { type: "artist" } },
-	}[kind];
+	const legacy =
+		kind === "artist"
+			? { path: "/me/following/contains", query: { type: "artist" } }
+			: { path: `/me/${kind}s/contains`, query: {} };
 	return client.withFallback(
 		"library-contains",
 		() =>
@@ -621,9 +638,91 @@ export function unfollowArtists(client: SpotifyClient, artistIds: string[]): Pro
 	);
 }
 
+/** Restricted folded show, episode and audiobook saves into /me/library too. */
+export function writeMediaLibrary(
+	client: SpotifyClient,
+	method: "PUT" | "DELETE",
+	kind: MediaKind,
+	refs: string[],
+): Promise<void> {
+	const ids = refs.map(toId);
+	// The legacy routes take ids as a query; shows and audiobooks document no body.
+	return client.withFallback(
+		"library-write",
+		() =>
+			client.requestVoid("/me/library", {
+				method,
+				query: { uris: ids.map((id) => toUri(kind, id)).join(",") },
+			}),
+		() => client.requestVoid(`/me/${kind}s`, { method, query: { ids: ids.join(",") } }),
+	);
+}
+
+type Page = { limit?: number; offset?: number };
+const pageQuery = (options: Page) => ({ limit: options.limit ?? 20, offset: options.offset ?? 0 });
+
+export async function getSavedShows(
+	client: SpotifyClient,
+	options: Page = {},
+): Promise<{ items: { show: Show; addedAt: string | null }[]; total: number | null }> {
+	const page = await client.request("/me/shows", pagingSchema(savedShowSchema), {
+		query: pageQuery(options),
+	});
+	const items = page.items.flatMap((entry) => {
+		const show = entry.item ?? entry.show;
+		return show ? [{ show, addedAt: entry.added_at ?? null }] : [];
+	});
+	return { items, total: page.total ?? null };
+}
+
+export async function getSavedEpisodes(
+	client: SpotifyClient,
+	options: Page = {},
+): Promise<{ items: { episode: Episode; addedAt: string | null }[]; total: number | null }> {
+	const page = await client.request("/me/episodes", pagingSchema(savedEpisodeSchema), {
+		query: pageQuery(options),
+	});
+	const items = page.items.flatMap((entry) => {
+		const episode = entry.item ?? entry.episode;
+		return episode ? [{ episode, addedAt: entry.added_at ?? null }] : [];
+	});
+	return { items, total: page.total ?? null };
+}
+
+export async function getSavedAudiobooks(
+	client: SpotifyClient,
+	options: Page = {},
+): Promise<{ items: { audiobook: Audiobook; addedAt: string | null }[]; total: number | null }> {
+	const page = await client.request("/me/audiobooks", pagingSchema(savedAudiobookSchema), {
+		query: pageQuery(options),
+	});
+	const items = page.items.flatMap((entry) => {
+		if ("id" in entry) return [{ audiobook: entry, addedAt: null }];
+		const audiobook = entry.item ?? entry.audiobook;
+		return audiobook ? [{ audiobook, addedAt: entry.added_at ?? null }] : [];
+	});
+	return { items, total: page.total ?? null };
+}
+
+export async function getShowEpisodes(
+	client: SpotifyClient,
+	showId: string,
+	options: Page = {},
+): Promise<{ items: Episode[]; total: number | null }> {
+	const page = await client.request(
+		`/shows/${encodeURIComponent(toId(showId))}/episodes`,
+		pagingSchema(episodeSchema.nullable()),
+		{ query: pageQuery(options) },
+	);
+	return { items: page.items.filter((e): e is Episode => e !== null), total: page.total ?? null };
+}
+
 export function getPlaybackState(client: SpotifyClient): Promise<PlaybackState | undefined> {
-	// Spotify returns 204 with no body when nothing is playing.
-	return client.request("/me/player", playbackStateSchema.optional());
+	// Spotify returns 204 with no body when nothing is playing. Without
+	// additional_types it reports a playing podcast episode as item: null.
+	return client.request("/me/player", playbackStateSchema.optional(), {
+		query: { additional_types: "track,episode" },
+	});
 }
 
 export async function getDevices(client: SpotifyClient): Promise<Device[]> {
@@ -687,7 +786,7 @@ export async function controlPlayback(
 			const body = command.contextUri
 				? { context_uri: toUri("playlist", command.contextUri) }
 				: command.uris?.length
-					? { uris: command.uris.map((u) => toUri("track", u)) }
+					? { uris: command.uris.map(toPlayableUri) }
 					: {};
 			await client.requestVoid("/me/player/play", {
 				method: "PUT",
@@ -732,11 +831,15 @@ export async function controlPlayback(
 	}
 }
 
-export function addToQueue(client: SpotifyClient, uri: string, deviceId?: string): Promise<void> {
+export async function addToQueue(
+	client: SpotifyClient,
+	uri: string,
+	deviceId?: string,
+): Promise<void> {
 	return client.requestVoid("/me/player/queue", {
 		method: "POST",
 		query: {
-			uri: toUri("track", uri),
+			uri: toPlayableUri(uri),
 			...(deviceId !== undefined ? { device_id: deviceId } : {}),
 		},
 	});
@@ -799,5 +902,40 @@ export function compactAlbum(a: SimplifiedAlbum): z.infer<typeof compactAlbumSch
 		artist: a.artists?.map((x) => x.name).join(", ") ?? "unknown",
 		...(a.release_date ? { released: a.release_date } : {}),
 		...(a.total_tracks != null ? { total_tracks: a.total_tracks } : {}),
+	};
+}
+
+export function compactShow(s: Show): z.infer<typeof compactShowSchema> {
+	return {
+		id: s.id,
+		name: s.name,
+		...(s.publisher ? { publisher: s.publisher } : {}),
+		...(s.total_episodes != null ? { total_episodes: s.total_episodes } : {}),
+	};
+}
+
+export function compactEpisode(e: Episode): z.infer<typeof compactEpisodeSchema> {
+	return {
+		...(e.id ? { id: e.id } : {}),
+		name: e.name,
+		...(e.show?.name ? { show: e.show.name } : {}),
+		...(e.release_date ? { released: e.release_date } : {}),
+		...(e.duration_ms != null ? { duration_ms: e.duration_ms } : {}),
+		...(e.resume_point?.resume_position_ms != null
+			? { resume_position_ms: e.resume_point.resume_position_ms }
+			: {}),
+		...(e.resume_point?.fully_played != null ? { fully_played: e.resume_point.fully_played } : {}),
+	};
+}
+
+export function compactAudiobook(b: Audiobook): z.infer<typeof compactAudiobookSchema> {
+	const narrator = b.narrators?.map((n) => n.name).join(", ");
+	return {
+		id: b.id,
+		name: b.name,
+		author: b.authors?.map((a) => a.name).join(", ") || "unknown",
+		...(narrator ? { narrator } : {}),
+		...(b.publisher ? { publisher: b.publisher } : {}),
+		...(b.total_chapters != null ? { total_chapters: b.total_chapters } : {}),
 	};
 }

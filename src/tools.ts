@@ -12,7 +12,10 @@ import {
 	CONTAINS_MAX,
 	compactAlbum,
 	compactArtist,
+	compactAudiobook,
+	compactEpisode,
 	compactPlaylist,
+	compactShow,
 	compactTrack,
 	controlPlayback,
 	createPlaylist,
@@ -31,7 +34,11 @@ import {
 	getQueue,
 	getRecentlyPlayed,
 	getSavedAlbums,
+	getSavedAudiobooks,
+	getSavedEpisodes,
+	getSavedShows,
 	getSavedTracks,
+	getShowEpisodes,
 	getTopArtists,
 	getTopTracks,
 	getTracks,
@@ -49,6 +56,7 @@ import {
 	unfollowArtists,
 	unfollowPlaylist,
 	updatePlaylistDetails,
+	writeMediaLibrary,
 } from "./endpoints";
 import { outputSchemas } from "./output-schemas";
 import {
@@ -64,13 +72,13 @@ import {
 
 // Sent once at initialize. Covers what the tool descriptions can't say
 // individually: how the surface fits together and where app access varies.
-export const INSTRUCTIONS = `Spotify for the signed-in user. Tracks, albums, artists and playlists are accepted as bare IDs, spotify: URIs or open.spotify.com links anywhere.
+export const INSTRUCTIONS = `Spotify for the signed-in user. Tracks, episodes, albums, shows, artists and playlists are accepted as bare IDs, spotify: URIs or open.spotify.com links anywhere. A bare ID passed to play or queue is a track.
 
 Start from search_music to turn names into IDs. get_playlist returns zero-based positions for reorder_playlist; removal by URI removes all occurrences. Use fetch_all for a bounded multi-page read. Playback tools need Spotify Premium and an open device; if none is active, list_devices then transfer_playback.
 
-The library splits by kind. Tracks: get_saved_tracks, save_tracks, remove_saved_tracks. Albums: get_saved_albums, save_albums, remove_saved_albums. Artists are followed rather than saved: get_followed_artists, follow_artists, unfollow_artists. Playlists too: follow_playlist, unfollow_playlist — and unfollowing one you own is how Spotify deletes it.
+The library splits by kind. Tracks: get_saved_tracks, save_tracks, remove_saved_tracks. Albums: get_saved_albums, save_albums, remove_saved_albums. Podcasts: get_saved_shows, save_shows, remove_saved_shows, get_saved_episodes, save_episodes, remove_saved_episodes, and get_show_episodes with resume points. Audiobooks: get_saved_audiobooks, save_audiobooks, remove_saved_audiobooks. Artists are followed rather than saved: get_followed_artists, follow_artists, unfollow_artists. Playlists too: follow_playlist, unfollow_playlist — and unfollowing one you own is how Spotify deletes it.
 
-get_tracks, get_artist and get_album each take up to 50 IDs (20 for albums) in one call. check_library says whether tracks or albums are saved and artists followed, so use it before a bulk save or follow instead of paging the library.
+get_tracks, get_artist and get_album each take up to 50 IDs (20 for albums) in one call. check_library says whether items of any library kind are saved or artists followed, so use it before a bulk save or follow instead of paging the library.
 
 For an artist, get_artist is the profile and get_artist_albums is the discography. Artist top tracks are not exposed here; search_music with an artist: filter returns matches, not an official top-track ranking. set_playlist_cover replaces a playlist's artwork from a URL, which must serve a JPEG of at most 192 KB.
 
@@ -924,9 +932,9 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Check library",
 			description:
-				"Check whether tracks or albums are already saved, or artists already followed, in one call (max 40 IDs, 20 for albums). Use before save_tracks, save_albums or follow_artists instead of paging the library.",
+				"Check whether items are already saved, or artists already followed, in one call (max 40 IDs, 20 for albums). Use before a save or follow instead of paging the library.",
 			inputSchema: {
-				kind: z.enum(["track", "album", "artist"]),
+				kind: z.enum(["track", "album", "artist", "show", "episode", "audiobook"]),
 				ids: z
 					.array(z.string())
 					.min(1)
@@ -953,6 +961,227 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 	);
 
 	server.registerTool(
+		"get_saved_shows",
+		{
+			title: "Saved podcasts",
+			description: "List the podcast shows saved to the user's library.",
+			inputSchema: {
+				limit: z.number().int().min(1).max(50).default(20),
+				offset: z.number().int().min(0).default(0),
+			},
+			annotations: readOnly,
+			outputSchema: outputSchemas.get_saved_shows,
+		},
+		guard(async ({ limit, offset }) => {
+			const page = await getSavedShows(sp(), { limit, offset });
+			return ok({
+				total: page.total,
+				offset,
+				shows: page.items.map(({ show, addedAt }) => ({
+					...compactShow(show),
+					...(addedAt ? { added_at: addedAt } : {}),
+				})),
+			});
+		}),
+	);
+
+	server.registerTool(
+		"save_shows",
+		{
+			title: "Save podcasts",
+			description: "Save (follow) podcast shows to the user's library.",
+			inputSchema: {
+				ids: z
+					.array(z.string())
+					.min(1)
+					.max(LIBRARY_WRITE_MAX)
+					.describe("Show IDs or spotify:show: URIs"),
+			},
+			annotations: additiveIdempotent,
+			outputSchema: outputSchemas.save_shows,
+		},
+		guard(async ({ ids }) => {
+			await writeMediaLibrary(sp(), "PUT", "show", ids);
+			return okText(`Saved ${ids.length} show(s).`);
+		}),
+	);
+
+	server.registerTool(
+		"remove_saved_shows",
+		{
+			title: "Remove saved podcasts",
+			description: "Remove podcast shows from the user's library.",
+			inputSchema: {
+				ids: z
+					.array(z.string())
+					.min(1)
+					.max(LIBRARY_WRITE_MAX)
+					.describe("Show IDs or spotify:show: URIs"),
+			},
+			annotations: destructive,
+			outputSchema: outputSchemas.remove_saved_shows,
+		},
+		guard(async ({ ids }) => {
+			await writeMediaLibrary(sp(), "DELETE", "show", ids);
+			return okText(`Removed ${ids.length} show(s).`);
+		}),
+	);
+
+	server.registerTool(
+		"get_show_episodes",
+		{
+			title: "Podcast episodes",
+			description:
+				"List a podcast show's episodes, newest first, with the user's resume point for each.",
+			inputSchema: {
+				show_id: z.string().describe("Show ID, URI or link"),
+				limit: z.number().int().min(1).max(50).default(20),
+				offset: z.number().int().min(0).default(0),
+			},
+			annotations: lookup,
+			outputSchema: outputSchemas.get_show_episodes,
+		},
+		guard(async ({ show_id, limit, offset }) => {
+			const page = await getShowEpisodes(sp(), show_id, { limit, offset });
+			return ok({ total: page.total, offset, episodes: page.items.map(compactEpisode) });
+		}),
+	);
+
+	server.registerTool(
+		"get_saved_episodes",
+		{
+			title: "Saved episodes",
+			description: "List the podcast episodes saved to the user's library.",
+			inputSchema: {
+				limit: z.number().int().min(1).max(50).default(20),
+				offset: z.number().int().min(0).default(0),
+			},
+			annotations: readOnly,
+			outputSchema: outputSchemas.get_saved_episodes,
+		},
+		guard(async ({ limit, offset }) => {
+			const page = await getSavedEpisodes(sp(), { limit, offset });
+			return ok({
+				total: page.total,
+				offset,
+				episodes: page.items.map(({ episode, addedAt }) => ({
+					...compactEpisode(episode),
+					...(addedAt ? { added_at: addedAt } : {}),
+				})),
+			});
+		}),
+	);
+
+	server.registerTool(
+		"save_episodes",
+		{
+			title: "Save episodes",
+			description: "Save podcast episodes to the user's library.",
+			inputSchema: {
+				ids: z
+					.array(z.string())
+					.min(1)
+					.max(LIBRARY_WRITE_MAX)
+					.describe("Episode IDs or spotify:episode: URIs"),
+			},
+			annotations: additiveIdempotent,
+			outputSchema: outputSchemas.save_episodes,
+		},
+		guard(async ({ ids }) => {
+			await writeMediaLibrary(sp(), "PUT", "episode", ids);
+			return okText(`Saved ${ids.length} episode(s).`);
+		}),
+	);
+
+	server.registerTool(
+		"remove_saved_episodes",
+		{
+			title: "Remove saved episodes",
+			description: "Remove podcast episodes from the user's library.",
+			inputSchema: {
+				ids: z
+					.array(z.string())
+					.min(1)
+					.max(LIBRARY_WRITE_MAX)
+					.describe("Episode IDs or spotify:episode: URIs"),
+			},
+			annotations: destructive,
+			outputSchema: outputSchemas.remove_saved_episodes,
+		},
+		guard(async ({ ids }) => {
+			await writeMediaLibrary(sp(), "DELETE", "episode", ids);
+			return okText(`Removed ${ids.length} episode(s).`);
+		}),
+	);
+
+	server.registerTool(
+		"get_saved_audiobooks",
+		{
+			title: "Saved audiobooks",
+			description: "List the audiobooks saved to the user's library.",
+			inputSchema: {
+				limit: z.number().int().min(1).max(50).default(20),
+				offset: z.number().int().min(0).default(0),
+			},
+			annotations: readOnly,
+			outputSchema: outputSchemas.get_saved_audiobooks,
+		},
+		guard(async ({ limit, offset }) => {
+			const page = await getSavedAudiobooks(sp(), { limit, offset });
+			return ok({
+				total: page.total,
+				offset,
+				audiobooks: page.items.map(({ audiobook, addedAt }) => ({
+					...compactAudiobook(audiobook),
+					...(addedAt ? { added_at: addedAt } : {}),
+				})),
+			});
+		}),
+	);
+
+	server.registerTool(
+		"save_audiobooks",
+		{
+			title: "Save audiobooks",
+			description: "Save audiobooks to the user's library.",
+			inputSchema: {
+				ids: z
+					.array(z.string())
+					.min(1)
+					.max(LIBRARY_WRITE_MAX)
+					.describe("Audiobook IDs or spotify:audiobook: URIs"),
+			},
+			annotations: additiveIdempotent,
+			outputSchema: outputSchemas.save_audiobooks,
+		},
+		guard(async ({ ids }) => {
+			await writeMediaLibrary(sp(), "PUT", "audiobook", ids);
+			return okText(`Saved ${ids.length} audiobook(s).`);
+		}),
+	);
+
+	server.registerTool(
+		"remove_saved_audiobooks",
+		{
+			title: "Remove saved audiobooks",
+			description: "Remove audiobooks from the user's library.",
+			inputSchema: {
+				ids: z
+					.array(z.string())
+					.min(1)
+					.max(LIBRARY_WRITE_MAX)
+					.describe("Audiobook IDs or spotify:audiobook: URIs"),
+			},
+			annotations: destructive,
+			outputSchema: outputSchemas.remove_saved_audiobooks,
+		},
+		guard(async ({ ids }) => {
+			await writeMediaLibrary(sp(), "DELETE", "audiobook", ids);
+			return okText(`Removed ${ids.length} audiobook(s).`);
+		}),
+	);
+
+	server.registerTool(
 		"get_playback_state",
 		{
 			title: "Now playing",
@@ -970,12 +1199,11 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					"No active playback.",
 				);
 			}
-			// Without additional_types, Spotify sends a null item for a podcast
-			// episode or an ad. Playback is still active, so don't report it idle.
+			// An ad, or anything else Spotify won't describe, comes back as a null item.
 			const unknownItem = state.item
 				? {}
 				: {
-						message: `Current item is ${state.currently_playing_type ?? "unknown"}; only tracks are described.`,
+						message: `Current item is ${state.currently_playing_type ?? "unknown"}; only tracks and episodes are described.`,
 					};
 			return ok({
 				is_playing: state.is_playing,
@@ -1021,12 +1249,14 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.string()
 					.optional()
 					.describe(
-						"Album, playlist or artist URI or link to play, only with action=play. A bare ID means a playlist.",
+						"Album, playlist, artist or show URI or link to play, only with action=play. A bare ID means a playlist.",
 					),
 				uris: z
 					.array(z.string())
 					.optional()
-					.describe("Track URIs to play, only with action=play (ignored if context_uri set)"),
+					.describe(
+						"Track or episode URIs to play, only with action=play (ignored if context_uri set). Bare IDs are tracks.",
+					),
 				position_ms: z
 					.number()
 					.int()
@@ -1118,10 +1348,10 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 	server.registerTool(
 		"add_to_queue",
 		{
-			title: "Queue a track",
-			description: "Add a track to the playback queue.",
+			title: "Queue a track or episode",
+			description: "Add a track or podcast episode to the playback queue.",
 			inputSchema: {
-				uri: z.string().describe("Track ID or spotify:track: URI"),
+				uri: z.string().describe("Track ID, or a track or episode URI or link"),
 				device_id: z.string().optional().describe("Target device ID"),
 			},
 			annotations: additive,
