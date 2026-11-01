@@ -287,7 +287,13 @@ export async function getPlaylistTracks(
 	hasNext: boolean;
 }> {
 	const pid = encodeURIComponent(toId(id));
-	const query = { limit: options.limit ?? 50, offset: options.offset ?? 0 };
+	// Without additional_types, Spotify squeezes episodes into a track shape with
+	// null artist names, which fails validation and loses the whole page.
+	const query = {
+		limit: options.limit ?? 50,
+		offset: options.offset ?? 0,
+		additional_types: "track,episode",
+	};
 	const schema = pagingSchema(playlistEntrySchema.nullable());
 	const page = await client.withFallback(
 		"playlist-items",
@@ -750,12 +756,15 @@ export function transferPlayback(
 // --- Compact output mappers: keep tool results small for the model ---
 
 export function compactTrack(track: Track): z.infer<typeof compactTrackSchema> {
+	// Episodes carry their own release date and a show in place of artists.
+	const released = track.album?.release_date ?? track.release_date;
 	return {
 		...(track.id ? { id: track.id } : {}),
 		name: track.name,
-		artist: track.artists?.map((a) => a.name).join(", ") ?? "unknown",
+		artist: track.show?.name ?? track.artists?.map((a) => a.name).join(", ") ?? "unknown",
 		...(track.album?.name ? { album: track.album.name } : {}),
-		...(track.album?.release_date ? { released: track.album.release_date } : {}),
+		...(released ? { released } : {}),
+		...(track.type === "episode" ? { type: "episode" as const } : {}),
 		...(track.duration_ms != null ? { duration_ms: track.duration_ms } : {}),
 		...(track.is_local ? { is_local: true } : {}),
 	};

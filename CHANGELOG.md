@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `get_playlist` no longer fails on a playlist that holds a podcast episode. It now asks Spotify for episodes and lists them with `type: "episode"` and the podcast name as the artist.
+
 ## 2026-11-01 — 0.7.1
 
 - Playlists, playback and the queue no longer fail when they hold a local file. Spotify sends its album with a null id, which the schema rejected.

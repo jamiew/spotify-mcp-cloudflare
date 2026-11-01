@@ -188,6 +188,40 @@ describe("getPlaylistTracks", () => {
 		]);
 	});
 
+	it("asks for episodes and shows their podcast as the artist", async () => {
+		const { client, seen } = makeClient({
+			"GET /v1/playlists/p1/items": () =>
+				Response.json({
+					items: [
+						{
+							item: {
+								type: "episode",
+								id: "e1",
+								name: "Why do cats purr?",
+								uri: "spotify:episode:e1",
+								duration_ms: 1500,
+								release_date: "2026-01-02",
+								artists: [],
+								show: { name: "Brains On!" },
+							},
+						},
+						{ item: track("t2", "Two") },
+					],
+					total: 2,
+				}),
+		});
+		const res = await getPlaylistTracks(client, "p1");
+		expect(seen[0]?.query.get("additional_types")).toBe("track,episode");
+		expect(res.tracks.map(compactTrack)[0]).toEqual({
+			id: "e1",
+			name: "Why do cats purr?",
+			artist: "Brains On!",
+			released: "2026-01-02",
+			type: "episode",
+			duration_ms: 1500,
+		});
+	});
+
 	it("falls back to the legacy /tracks path with the legacy track field", async () => {
 		const { client, seen } = makeClient({
 			"GET /v1/playlists/p1/items": notFound,

@@ -9,6 +9,7 @@ export const compactTrackSchema = z.object({
 	released: z.string().optional(),
 	duration_ms: z.number().optional(),
 	is_local: z.boolean().optional(),
+	type: z.literal("episode").optional(),
 });
 
 export const compactArtistSchema = z.object({

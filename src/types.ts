@@ -47,6 +47,10 @@ export const trackSchema = z.object({
 	// Local files carry an album with a null id.
 	album: simplifiedAlbumSchema.extend({ id: z.string().nullish() }).nullish(),
 	is_local: z.boolean().nullish(),
+	// Playlists can hold podcast episodes, which carry a show instead of artists.
+	type: z.string().nullish(),
+	show: z.object({ name: z.string() }).nullish(),
+	release_date: z.string().nullish(),
 });
 
 export const albumSchema = simplifiedAlbumSchema.extend({
