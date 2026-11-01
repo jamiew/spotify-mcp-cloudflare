@@ -130,7 +130,8 @@ playback, listening history and profile/email. There is no enforced read-only ti
 
 ## Tools and prompts
 
-34 tools. Track and playlist arguments accept bare IDs or `spotify:` URIs.
+34 tools. Track, album, artist and playlist arguments accept bare IDs, `spotify:`
+URIs or `open.spotify.com` links.
 Results are compact structured objects; playback writes acknowledge the request,
 not confirmed device state.
 
@@ -164,9 +165,10 @@ or grant permission to send Spotify content to a model:
 - `search_music.offset` applies to each result type, from 0 through 1,000;
   `limit` is the total per type, not a page size. Search relevance is not an
   official artist top-track ranking.
-- Playback control requires Spotify Premium and an active device.
+- Playback control requires Spotify Premium and an active device. Only tracks
+  are described: a playing podcast episode or ad reports `track: null`.
   `set_playlist_cover` accepts an HTTPS JPEG URL and enforces Spotify's 256 KB
-  encoded-payload cap.
+  encoded-payload cap, about 192 KB of JPEG.
 - Tool annotations are client hints, not authorization or human approval.
   Playlist removal requests confirmation through elicitation when supported;
   decline, cancel or failure blocks removal. Otherwise use your client's own

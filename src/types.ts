@@ -44,7 +44,8 @@ export const trackSchema = z.object({
 	explicit: z.boolean().nullish(),
 	track_number: z.number().nullish(),
 	artists: z.array(simplifiedArtistSchema).nullish(),
-	album: simplifiedAlbumSchema.nullish(),
+	// Local files carry an album with a null id.
+	album: simplifiedAlbumSchema.extend({ id: z.string().nullish() }).nullish(),
 	is_local: z.boolean().nullish(),
 });
 
@@ -147,6 +148,7 @@ export const playbackStateSchema = z.object({
 	item: trackSchema.nullish(),
 	shuffle_state: z.boolean().nullish(),
 	repeat_state: z.string().nullish(),
+	currently_playing_type: z.string().nullish(),
 	context: z.object({ type: z.string().nullish(), uri: z.string().nullish() }).nullish(),
 });
 

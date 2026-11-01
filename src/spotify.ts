@@ -315,7 +315,7 @@ export class SpotifyClient {
 function parseRef(ref: string): { kind: string; id: string } | undefined {
 	if (ref.startsWith("spotify:")) {
 		const parts = ref.split(":");
-		const kind = parts[1];
+		const kind = parts[1] === "user" && parts[3] === "playlist" ? "playlist" : parts[1];
 		const id = parts[parts.length - 1];
 		return kind && id ? { kind, id } : undefined;
 	}
