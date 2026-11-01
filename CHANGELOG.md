@@ -1,11 +1,12 @@
 # Changelog
 
-## Unreleased
+## 2026-11-01 — 0.7.1
 
 - Playlists, playback and the queue no longer fail when they hold a local file. Spotify sends its album with a null id, which the schema rejected.
 - `control_playback play` sends only `context_uri` when both it and `uris` are given, as documented; Spotify rejects both with 400. `context_uri` now accepts share links, and legacy `spotify:user:x:playlist:y` URIs normalize to a playlist.
 - `get_playback_state` reports active playback of a podcast episode or ad with `track: null` instead of "No active playback."
 - Cover art docs give the real limit: a 192 KB JPEG, since Spotify's 256 KB cap applies after base64 encoding.
+- Dependencies refreshed within their major versions (MCP SDK 1.32, `workers-oauth-provider` 0.10.4, `hono` 4.13, `wrangler` 4.156). pnpm overrides move `agents`' bundled MCP SDK v2 to 2.3.1 and `vite` to 8.3, which clears the dependency audit again (#11).
 
 ## 2026-09-20 — 0.7.0
 
