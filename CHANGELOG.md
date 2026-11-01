@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A rejected request (HTTP 400 and other 4xx) no longer says "Try again shortly". The error passes Spotify's reason through, such as "Invalid base62 id". Only 429 and 5xx errors suggest retrying.
+
 ## 2026-11-01 — 0.7.2
 
 - `get_playlist` no longer fails on a playlist that holds a podcast episode. It now asks Spotify for episodes and lists them with `type: "episode"` and the podcast name as the artist.
