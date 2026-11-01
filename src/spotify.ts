@@ -117,7 +117,14 @@ export class SpotifyClient {
 
 	/** Request and Zod-parse a JSON response. Empty bodies parse as undefined. */
 	async request<T>(path: string, schema: z.ZodType<T>, spec: RequestSpec = {}): Promise<T> {
-		const raw = await this.requestRaw(path, spec);
+		const response = await this.fetchOk(path, spec);
+		const text = response.status === 204 ? "" : await response.text();
+		let raw: unknown;
+		try {
+			raw = text.length === 0 ? undefined : JSON.parse(text);
+		} catch {
+			throw new ResponseShapeError(path, "response was not valid JSON");
+		}
 		const parsed = schema.safeParse(raw);
 		if (!parsed.success) {
 			const detail = parsed.error.issues
@@ -129,9 +136,13 @@ export class SpotifyClient {
 		return parsed.data;
 	}
 
-	/** Request where the response body doesn't matter (mutations). */
+	/**
+	 * Request where the response body doesn't matter (mutations). Never parses
+	 * it: player writes now answer 200 with an opaque plain-text token.
+	 */
 	async requestVoid(path: string, spec: RequestSpec = {}): Promise<void> {
-		await this.requestRaw(path, spec);
+		const response = await this.fetchOk(path, spec);
+		await response.body?.cancel();
 	}
 
 	/**
@@ -169,7 +180,8 @@ export class SpotifyClient {
 		}
 	}
 
-	private async requestRaw(path: string, spec: RequestSpec): Promise<unknown> {
+	/** Sends the request, handling 401 refresh and 429 backoff; throws on any non-2xx. */
+	private async fetchOk(path: string, spec: RequestSpec): Promise<Response> {
 		const url = this.buildUrl(path, spec.query);
 		let token = await this.tokenProvider.getAccessToken();
 		let refreshed = false;
@@ -212,14 +224,7 @@ export class SpotifyClient {
 				);
 			}
 
-			if (response.status === 204) return undefined;
-			const text = await response.text();
-			if (text.length === 0) return undefined;
-			try {
-				return JSON.parse(text);
-			} catch {
-				throw new ResponseShapeError(path, "response was not valid JSON");
-			}
+			return response;
 		}
 	}
 
