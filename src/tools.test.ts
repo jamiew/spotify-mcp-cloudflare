@@ -170,6 +170,21 @@ describe("registerTools", () => {
 		expect(seen[0]?.query.get("uri")).toBe("spotify:track:4uLU6hMCjMI75M1A2tKUQC");
 	});
 
+	it("treats a 200 with an opaque plain-text body as success for player writes", async () => {
+		// Spotify's live answers to these, verbatim: 200, no content-type, a token.
+		const { call } = await connect({
+			"PUT /v1/me/player/seek": () => new Response("75Hr8PcRIYoJepokoqsdMo8ygaw", { status: 200 }),
+			"POST /v1/me/player/queue": () =>
+				new Response("4vqwbjpmyaaHu8O6PgcumHo8drw", { status: 200 }),
+		});
+		const seek = await call("control_playback", { action: "seek", position_ms: 1000 });
+		expect(seek.isError).toBeUndefined();
+		expect(seek.structuredContent).toMatchObject({ status: "success" });
+		const queued = await call("add_to_queue", { uri: "t1" });
+		expect(queued.isError).toBeUndefined();
+		expect(queued.structuredContent).toMatchObject({ status: "success" });
+	});
+
 	it("play sends one target: a normalized context wins over uris", async () => {
 		const { call, seen } = await connect({
 			"PUT /v1/me/player/play": () => new Response(null, { status: 204 }),

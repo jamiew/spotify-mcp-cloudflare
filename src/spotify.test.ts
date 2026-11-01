@@ -146,6 +146,15 @@ describe("SpotifyClient", () => {
 		await expect(client.request("/thing", nameSchema)).rejects.toThrow(ResponseShapeError);
 	});
 
+	it("ignores an opaque 200 body on writes but still rejects it on reads", async () => {
+		const { client } = makeClient({
+			"PUT /v1/me/player/play": () => new Response("ngoJ7b86deZ_AnI3vANoPbW1vVo", { status: 200 }),
+			"GET /v1/thing": () => new Response("ngoJ7b86deZ_AnI3vANoPbW1vVo", { status: 200 }),
+		});
+		await expect(client.requestVoid("/me/player/play", { method: "PUT" })).resolves.toBeUndefined();
+		await expect(client.request("/thing", nameSchema)).rejects.toThrow(ResponseShapeError);
+	});
+
 	it("parses 204-no-content as undefined for optional schemas", async () => {
 		const { client } = makeClient({
 			"GET /v1/me/player": () => new Response(null, { status: 204 }),
