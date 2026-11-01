@@ -677,10 +677,12 @@ export async function controlPlayback(
 	const device = deviceId !== undefined ? { device_id: deviceId } : {};
 	switch (command.action) {
 		case "play": {
-			const body = {
-				...(command.uris?.length ? { uris: command.uris.map((u) => toUri("track", u)) } : {}),
-				...(command.contextUri ? { context_uri: command.contextUri } : {}),
-			};
+			// Spotify rejects a body with both context_uri and uris; the context wins.
+			const body = command.contextUri
+				? { context_uri: toUri("playlist", command.contextUri) }
+				: command.uris?.length
+					? { uris: command.uris.map((u) => toUri("track", u)) }
+					: {};
 			await client.requestVoid("/me/player/play", {
 				method: "PUT",
 				query: device,

@@ -15,7 +15,9 @@ because both projects have the same version number.
 The canonical surface keeps 34 tools and three prompts. This update brings over
 output schemas, explicit search offset, snapshot-guarded reordering, bounded
 playlist pagination/progress and client-supported removal elicitation. Python
-still has resources, two additional prompts and best-effort playback confirmation.
+still has resources, two additional prompts, best-effort playback confirmation,
+and podcast, episode and audiobook library tools with episodes in playback,
+queue and playlist reads.
 Public names and result shapes differ; this is not a drop-in client migration.
 
 The Worker remains on McpAgent and MCP SDK v1 for this pass. Changing the token

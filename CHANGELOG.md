@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Playlists, playback and the queue no longer fail when they hold a local file. Spotify sends its album with a null id, which the schema rejected.
+- `control_playback play` sends only `context_uri` when both it and `uris` are given, as documented; Spotify rejects both with 400. `context_uri` now accepts share links, and legacy `spotify:user:x:playlist:y` URIs normalize to a playlist.
+- `get_playback_state` reports active playback of a podcast episode or ad with `track: null` instead of "No active playback."
+- Cover art docs give the real limit: a 192 KB JPEG, since Spotify's 256 KB cap applies after base64 encoding.
+
 ## 2026-09-20 — 0.7.0
 
 - Local stdio and the existing Worker share the canonical TypeScript tool/API core; explicit PKCE login stores private, atomically replaced tokens with refresh rotation and single-owner locking.

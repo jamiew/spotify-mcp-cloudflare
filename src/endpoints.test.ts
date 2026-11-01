@@ -150,7 +150,18 @@ describe("getPlaylistTracks", () => {
 				Response.json({
 					items: [
 						{ item: null, is_local: true },
-						{ item: { ...track("t1", "Ripped"), id: null, is_local: true } },
+						{
+							// Spotify's documented local-file shape: null ids, empty album fields.
+							item: {
+								id: null,
+								name: "Ripped",
+								uri: "spotify:local:Artist:Album:Ripped:1000",
+								artists: [{ id: null, name: "Artist", uri: null }],
+								album: { id: null, name: "Album", release_date: null, artists: [], uri: null },
+								duration_ms: 1000,
+								is_local: true,
+							},
+						},
 						{ item: track("t2", "Two") },
 					],
 					total: 3,
@@ -163,7 +174,6 @@ describe("getPlaylistTracks", () => {
 				name: "Ripped",
 				artist: "Artist",
 				album: "Album",
-				released: "2020-01-01",
 				duration_ms: 1000,
 				is_local: true,
 			},

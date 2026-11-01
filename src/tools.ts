@@ -72,7 +72,7 @@ The library splits by kind. Tracks: get_saved_tracks, save_tracks, remove_saved_
 
 get_tracks, get_artist and get_album each take up to 50 IDs (20 for albums) in one call. check_library says whether tracks or albums are saved and artists followed, so use it before a bulk save or follow instead of paging the library.
 
-For an artist, get_artist is the profile and get_artist_albums is the discography. Artist top tracks are not exposed here; search_music with an artist: filter returns matches, not an official top-track ranking. set_playlist_cover replaces a playlist's artwork from a URL, which must serve a JPEG of at most 256 KB.
+For an artist, get_artist is the profile and get_artist_albums is the discography. Artist top tracks are not exposed here; search_music with an artist: filter returns matches, not an official top-track ranking. set_playlist_cover replaces a playlist's artwork from a URL, which must serve a JPEG of at most 192 KB.
 
 Spotify endpoint and field availability varies by app creation date, quota mode, scopes and account access. This server does not expose recommendations, audio features, audio analysis or related artists. Do not assume they were withdrawn for every app or that an AI recommendation workflow is permitted by Spotify's terms. Listening-history tools return observations, not a recommendation engine.
 
@@ -675,10 +675,10 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Set playlist cover art",
 			description:
-				"Replace a playlist's cover image. Takes an https URL serving a JPEG of at most 256 KB; PNGs and oversized images are rejected before upload.",
+				"Replace a playlist's cover image. Takes an https URL serving a JPEG of at most 192 KB (256 KB once base64-encoded); PNGs and oversized images are rejected before upload.",
 			inputSchema: {
 				playlist_id: z.string().describe("Playlist ID or URI"),
-				image_url: z.string().describe("https URL of a JPEG image, 256 KB or smaller"),
+				image_url: z.string().describe("https URL of a JPEG image, 192 KB or smaller"),
 			},
 			annotations: {
 				readOnlyHint: false,
@@ -964,12 +964,19 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		},
 		guard(async () => {
 			const state = await getPlaybackState(sp());
-			if (!state?.item) {
+			if (!state) {
 				return ok(
 					{ is_playing: false, track: null, message: "No active playback." },
 					"No active playback.",
 				);
 			}
+			// Without additional_types, Spotify sends a null item for a podcast
+			// episode or an ad. Playback is still active, so don't report it idle.
+			const unknownItem = state.item
+				? {}
+				: {
+						message: `Current item is ${state.currently_playing_type ?? "unknown"}; only tracks are described.`,
+					};
 			return ok({
 				is_playing: state.is_playing,
 				...(state.progress_ms != null ? { progress_ms: state.progress_ms } : {}),
@@ -986,8 +993,9 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 							},
 						}
 					: {}),
-				track: compactTrack(state.item),
+				track: state.item ? compactTrack(state.item) : null,
 				...(state.context?.uri ? { context: state.context.uri } : {}),
+				...unknownItem,
 			});
 		}),
 	);
@@ -1012,7 +1020,9 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 				context_uri: z
 					.string()
 					.optional()
-					.describe("Context URI to play (album/playlist/artist), only with action=play"),
+					.describe(
+						"Album, playlist or artist URI or link to play, only with action=play. A bare ID means a playlist.",
+					),
 				uris: z
 					.array(z.string())
 					.optional()

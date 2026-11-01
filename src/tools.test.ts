@@ -170,6 +170,27 @@ describe("registerTools", () => {
 		expect(seen[0]?.query.get("uri")).toBe("spotify:track:4uLU6hMCjMI75M1A2tKUQC");
 	});
 
+	it("play sends one target: a normalized context wins over uris", async () => {
+		const { call, seen } = await connect({
+			"PUT /v1/me/player/play": () => new Response(null, { status: 204 }),
+		});
+		await call("control_playback", {
+			action: "play",
+			context_uri: "https://open.spotify.com/album/1A2B?si=x",
+			uris: ["t1"],
+		});
+		await call("control_playback", {
+			action: "play",
+			context_uri: "spotify:user:someone:playlist:xyz",
+		});
+		await call("control_playback", { action: "play", uris: ["t1"] });
+		expect(seen.map((s) => s.body)).toEqual([
+			{ context_uri: "spotify:album:1A2B" },
+			{ context_uri: "spotify:playlist:xyz" },
+			{ uris: ["spotify:track:t1"] },
+		]);
+	});
+
 	it("check_library fails loudly on a short answer instead of mislabelling", async () => {
 		const { call } = await connect({
 			"GET /v1/me/library/contains": () => Response.json([true]),
@@ -240,6 +261,25 @@ describe("registerTools", () => {
 		expect(saved.structuredContent).toMatchObject({ status: "success" });
 		const acknowledgement = z.object({ message: z.string() }).parse(saved.structuredContent);
 		expect(saved.content).toEqual([{ type: "text", text: acknowledgement.message }]);
+	});
+
+	it("reports active playback of an item it can't describe instead of no playback", async () => {
+		const { call } = await connect({
+			"GET /v1/me/player": () =>
+				Response.json({
+					is_playing: true,
+					progress_ms: 1000,
+					item: null,
+					currently_playing_type: "episode",
+					device: { id: "d1", name: "Phone", is_active: true },
+				}),
+		});
+		expect((await call("get_playback_state")).structuredContent).toMatchObject({
+			is_playing: true,
+			track: null,
+			device: { name: "Phone" },
+			message: "Current item is episode; only tracks are described.",
+		});
 	});
 
 	it("fetches bounded playlist positions across short pages and reports progress", async () => {
