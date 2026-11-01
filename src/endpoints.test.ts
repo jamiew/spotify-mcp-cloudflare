@@ -563,10 +563,31 @@ describe("writeMediaLibrary", () => {
 		});
 		await writeMediaLibrary(client, "DELETE", "audiobook", ["b1", "spotify:audiobook:b2"]);
 		expect(seen.map((s) => `${s.method} ${s.path}?${s.query}`)).toEqual([
-			"DELETE /v1/me/library?uris=spotify%3Aaudiobook%3Ab1%2Cspotify%3Aaudiobook%3Ab2",
+			// /me/library rejects audiobook URIs but takes the id as a show.
+			"DELETE /v1/me/library?uris=spotify%3Ashow%3Ab1%2Cspotify%3Ashow%3Ab2",
 			"DELETE /v1/me/audiobooks?ids=b1%2Cb2",
 		]);
 		expect(seen[1]?.body).toBeUndefined();
+	});
+
+	it("surfaces a 5xx from /me/library instead of falling back or passing", async () => {
+		const { client, seen } = makeClient({
+			"PUT /v1/me/library": () =>
+				Response.json({ error: { status: 502, message: "Bad gateway" } }, { status: 502 }),
+			"PUT /v1/me/shows": () => new Response(null, { status: 200 }),
+		});
+		await expect(writeMediaLibrary(client, "PUT", "show", ["s1"])).rejects.toMatchObject({
+			status: 502,
+		});
+		expect(seen).toHaveLength(1);
+	});
+
+	it("checks audiobooks on /me/library as shows", async () => {
+		const { client, seen } = makeClient({
+			"GET /v1/me/library/contains": () => Response.json([true]),
+		});
+		expect(await libraryContains(client, "audiobook", ["spotify:audiobook:b1"])).toEqual([true]);
+		expect(seen[0]?.query.get("uris")).toBe("spotify:show:b1");
 	});
 });
 

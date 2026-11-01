@@ -170,7 +170,9 @@ or grant permission to send Spotify content to a model:
 - Playback control requires Spotify Premium and an active device. Playback
   state and the queue describe tracks and podcast episodes (`type: "episode"`,
   with the show as `artist`); an ad reports `track: null`. To play or queue an
-  episode, pass its URI or link: a bare ID is taken as a track.
+  episode, pass its URI or link: a bare ID is taken as a track. Playing an
+  episode is best effort: Spotify can accept the request and leave the player
+  idle, so check `get_playback_state` afterwards.
 - `get_show_episodes` includes each episode's resume point. That needs the
   `user-read-playback-position` permission, so reconnect once after upgrading.
 - `set_playlist_cover` accepts an HTTPS JPEG URL and enforces Spotify's 256 KB

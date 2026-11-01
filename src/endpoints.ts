@@ -218,6 +218,15 @@ export const CONTAINS_MAX = {
 };
 
 /**
+ * The URI /me/library accepts for an item. It answers 5xx to
+ * `spotify:audiobook:` URIs but takes the same id as `spotify:show:` (seen
+ * live, November 2026); the legacy /me/audiobooks routes confirm the result.
+ */
+function libraryUri(kind: LibraryKind, id: string): string {
+	return toUri(kind === "audiobook" ? "show" : kind, id);
+}
+
+/**
  * Restricted folded the per-kind contains routes into /me/library/contains,
  * keyed by URI; legacy keeps one route per kind, keyed by id.
  */
@@ -235,7 +244,7 @@ export function libraryContains(
 		"library-contains",
 		() =>
 			client.request("/me/library/contains", containsSchema, {
-				query: { uris: bare.map((id) => toUri(kind, id)).join(",") },
+				query: { uris: bare.map((id) => libraryUri(kind, id)).join(",") },
 			}),
 		() =>
 			client.request(legacy.path, containsSchema, {
@@ -652,7 +661,7 @@ export function writeMediaLibrary(
 		() =>
 			client.requestVoid("/me/library", {
 				method,
-				query: { uris: ids.map((id) => toUri(kind, id)).join(",") },
+				query: { uris: ids.map((id) => libraryUri(kind, id)).join(",") },
 			}),
 		() => client.requestVoid(`/me/${kind}s`, { method, query: { ids: ids.join(",") } }),
 	);
