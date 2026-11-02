@@ -126,12 +126,13 @@ client that should use the hosted server, bridge it with
 Approve the MCP client in your browser, then authorize your Spotify account.
 Tokens refresh automatically. Reconnect and authorize again after scope changes.
 Requested access covers playlist/library/follow reads and writes, cover upload,
-playback, listening history and profile/email. There is no enforced read-only tier.
+playback, episode resume points, listening history and profile/email. There is
+no enforced read-only tier.
 
 ## Tools and prompts
 
-34 tools. Track, album, artist and playlist arguments accept bare IDs, `spotify:`
-URIs or `open.spotify.com` links.
+44 tools. Track, episode, album, show, artist and playlist arguments accept bare
+IDs, `spotify:` URIs or `open.spotify.com` links.
 Results are compact structured objects; playback writes acknowledge the request,
 not confirmed device state.
 
@@ -140,6 +141,7 @@ not confirmed device state.
 | Profile and search | `get_me`, `search_music`, `get_tracks`, `get_artist`, `get_artist_albums`, `get_album` |
 | Playlists | `list_playlists`, `get_playlist`, `create_playlist`, `update_playlist_details`, `set_playlist_cover`, `add_tracks_to_playlist`, `remove_tracks_from_playlist`, `reorder_playlist`, `follow_playlist`, `unfollow_playlist` |
 | Library | `get_saved_tracks`, `save_tracks`, `remove_saved_tracks`, `get_saved_albums`, `save_albums`, `remove_saved_albums`, `check_library` |
+| Podcasts and audiobooks | `get_saved_shows`, `save_shows`, `remove_saved_shows`, `get_show_episodes`, `get_saved_episodes`, `save_episodes`, `remove_saved_episodes`, `get_saved_audiobooks`, `save_audiobooks`, `remove_saved_audiobooks` |
 | Following | `get_followed_artists`, `follow_artists`, `unfollow_artists` |
 | Playback | `get_playback_state`, `control_playback`, `get_queue`, `add_to_queue`, `list_devices`, `transfer_playback` |
 | History | `get_recently_played`, `get_top_items` |
@@ -165,9 +167,15 @@ or grant permission to send Spotify content to a model:
 - `search_music.offset` applies to each result type, from 0 through 1,000;
   `limit` is the total per type, not a page size. Search relevance is not an
   official artist top-track ranking.
-- Playback control requires Spotify Premium and an active device. Only tracks
-  are described: a playing podcast episode or ad reports `track: null`.
-  `set_playlist_cover` accepts an HTTPS JPEG URL and enforces Spotify's 256 KB
+- Playback control requires Spotify Premium and an active device. Playback
+  state and the queue describe tracks and podcast episodes (`type: "episode"`,
+  with the show as `artist`); an ad reports `track: null`. To play or queue an
+  episode, pass its URI or link: a bare ID is taken as a track. Playing an
+  episode is best effort: Spotify can accept the request and leave the player
+  idle, so check `get_playback_state` afterwards.
+- `get_show_episodes` includes each episode's resume point. That needs the
+  `user-read-playback-position` permission, so reconnect once after upgrading.
+- `set_playlist_cover` accepts an HTTPS JPEG URL and enforces Spotify's 256 KB
   encoded-payload cap, about 192 KB of JPEG.
 - Tool annotations are client hints, not authorization or human approval.
   Playlist removal requests confirmation through elicitation when supported;

@@ -132,6 +132,66 @@ export const savedAlbumSchema = z.object({
 	album: simplifiedAlbumSchema.nullish(),
 });
 
+export const showSchema = z.object({
+	id: z.string(),
+	name: z.string(),
+	publisher: z.string().nullish(),
+	total_episodes: z.number().nullish(),
+	explicit: z.boolean().nullish(),
+});
+
+// A show's own episode list omits `show`; the resume point needs the
+// user-read-playback-position scope.
+export const episodeSchema = z.object({
+	id: z.string().nullish(),
+	name: z.string(),
+	release_date: z.string().nullish(),
+	duration_ms: z.number().nullish(),
+	explicit: z.boolean().nullish(),
+	show: z.object({ id: z.string().nullish(), name: z.string() }).nullish(),
+	resume_point: z
+		.object({
+			resume_position_ms: z.number().nullish(),
+			fully_played: z.boolean().nullish(),
+		})
+		.nullish(),
+});
+
+export const audiobookSchema = z.object({
+	id: z.string(),
+	name: z.string(),
+	authors: z.array(z.object({ name: z.string() })).nullish(),
+	narrators: z.array(z.object({ name: z.string() })).nullish(),
+	publisher: z.string().nullish(),
+	total_chapters: z.number().nullish(),
+	explicit: z.boolean().nullish(),
+});
+
+// Saved lists wrap each object with added_at; restricted renames the key to
+// `item`, as it does for tracks and albums.
+export const savedShowSchema = z.object({
+	added_at: z.string().nullish(),
+	item: showSchema.nullish(),
+	show: showSchema.nullish(),
+});
+
+export const savedEpisodeSchema = z.object({
+	added_at: z.string().nullish(),
+	item: episodeSchema.nullish(),
+	episode: episodeSchema.nullish(),
+});
+
+// Spotify's reference documents bare audiobooks here, unlike the other saved
+// lists. Accept either shape.
+export const savedAudiobookSchema = z.union([
+	audiobookSchema,
+	z.object({
+		added_at: z.string().nullish(),
+		item: audiobookSchema.nullish(),
+		audiobook: audiobookSchema.nullish(),
+	}),
+]);
+
 // GET /me/following nests its page under `artists` and pages by cursor, not offset.
 export const followedArtistsSchema = z.object({ artists: pagingSchema(artistSchema) });
 
@@ -188,3 +248,6 @@ export type CurrentUser = z.infer<typeof currentUserSchema>;
 export type Playlist = z.infer<typeof playlistSchema>;
 export type Device = z.infer<typeof deviceSchema>;
 export type PlaybackState = z.infer<typeof playbackStateSchema>;
+export type Show = z.infer<typeof showSchema>;
+export type Episode = z.infer<typeof episodeSchema>;
+export type Audiobook = z.infer<typeof audiobookSchema>;

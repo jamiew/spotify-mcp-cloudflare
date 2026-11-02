@@ -38,6 +38,35 @@ export const compactPlaylistSchema = z.object({
 	snapshot_id: z.string().optional(),
 });
 
+export const compactShowSchema = z.object({
+	id: z.string(),
+	name: z.string(),
+	publisher: z.string().optional(),
+	total_episodes: z.number().optional(),
+	added_at: z.string().optional(),
+});
+
+export const compactEpisodeSchema = z.object({
+	id: z.string().optional(),
+	name: z.string(),
+	show: z.string().optional(),
+	released: z.string().optional(),
+	duration_ms: z.number().optional(),
+	resume_position_ms: z.number().optional(),
+	fully_played: z.boolean().optional(),
+	added_at: z.string().optional(),
+});
+
+export const compactAudiobookSchema = z.object({
+	id: z.string(),
+	name: z.string(),
+	author: z.string(),
+	narrator: z.string().optional(),
+	publisher: z.string().optional(),
+	total_chapters: z.number().optional(),
+	added_at: z.string().optional(),
+});
+
 const acknowledgementSchema = z.object({
 	status: z.literal("success"),
 	message: z.string(),
@@ -127,8 +156,18 @@ export const outputSchemas = {
 	}),
 	follow_artists: acknowledgementSchema,
 	unfollow_artists: acknowledgementSchema,
+	get_saved_shows: z.object({ ...page, shows: z.array(compactShowSchema) }),
+	save_shows: acknowledgementSchema,
+	remove_saved_shows: acknowledgementSchema,
+	get_show_episodes: z.object({ ...page, episodes: z.array(compactEpisodeSchema) }),
+	get_saved_episodes: z.object({ ...page, episodes: z.array(compactEpisodeSchema) }),
+	save_episodes: acknowledgementSchema,
+	remove_saved_episodes: acknowledgementSchema,
+	get_saved_audiobooks: z.object({ ...page, audiobooks: z.array(compactAudiobookSchema) }),
+	save_audiobooks: acknowledgementSchema,
+	remove_saved_audiobooks: acknowledgementSchema,
 	check_library: z.object({
-		kind: z.enum(["track", "album", "artist"]),
+		kind: z.enum(["track", "album", "artist", "show", "episode", "audiobook"]),
 		items: z.array(z.object({ id: z.string(), in_library: z.boolean() })),
 	}),
 	get_playback_state: z.object({

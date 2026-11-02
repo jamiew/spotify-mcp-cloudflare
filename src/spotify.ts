@@ -338,6 +338,20 @@ export function toUri(kind: string, ref: string): string {
 	return parsed ? `spotify:${parsed.kind}:${parsed.id}` : `spotify:${kind}:${ref}`;
 }
 
+/**
+ * Normalizes something to play or queue as an item: a track or an episode.
+ * A bare ID carries no kind and is taken as a track.
+ */
+export function toPlayableUri(ref: string): string {
+	const kind = parseRef(ref)?.kind ?? "track";
+	if (kind !== "track" && kind !== "episode") {
+		throw new Error(
+			`Only tracks and episodes play or queue as items, got ${kind}. Play an album, show, artist or playlist with context_uri.`,
+		);
+	}
+	return toUri(kind, ref);
+}
+
 /** Strips a `spotify:kind:` prefix or share-URL wrapper, returning the bare ID. */
 export function toId(ref: string): string {
 	return parseRef(ref)?.id ?? ref;

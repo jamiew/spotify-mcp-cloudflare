@@ -4,6 +4,11 @@
 
 - Playback controls and `add_to_queue` no longer report "unexpected shape" after Spotify did the action. Spotify now answers player writes with HTTP 200 and an opaque plain-text body, and the client tried to parse it as JSON. Writes no longer read the response body; reads still validate theirs.
 - A rejected request (HTTP 400 and other 4xx) no longer says "Try again shortly". The error passes Spotify's reason through, such as "Invalid base62 id". Only 429 and 5xx errors suggest retrying.
+- **Reconnect once after upgrading.** The server now asks for `user-read-playback-position` so episode lists can include resume points. Remote users reconnect the MCP server; local users run `pnpm run login` again.
+- Podcast and audiobook library tools, matching the Python edition: `get_saved_shows`, `save_shows`, `remove_saved_shows`, `get_show_episodes` (with resume points), `get_saved_episodes`, `save_episodes`, `remove_saved_episodes`, `get_saved_audiobooks`, `save_audiobooks` and `remove_saved_audiobooks`. `check_library` takes `show`, `episode` and `audiobook`. Writes use `/me/library` and fall back to the legacy per-kind routes like the other library writes.
+- `get_playback_state` and `get_queue` describe a playing podcast episode (`type: "episode"`, the show as `artist`) instead of `track: null`.
+- `control_playback play` and `add_to_queue` keep episode URIs and links. A bare ID is still a track. Albums, shows, artists and playlists are refused as items, with a pointer to `context_uri`. Playing an episode is best effort: Spotify has accepted the request and left the player idle.
+- Audiobooks go to `/me/library` as `spotify:show:` URIs, because Spotify answers 5xx to `spotify:audiobook:` there. The legacy `/me/audiobooks` routes stay as the fallback.
 - `agents` 0.23 → 0.32. `McpAgent` still runs on MCP SDK v1; since 0.31 `agents` no longer installs it, so `@modelcontextprotocol/sdk` 1.32.2 and `@modelcontextprotocol/server` 2.4.0 are pinned to the versions it expects. The pnpm overrides for its old MCP SDK v2 and `vite` are gone. Tests move to vitest 5 and `@cloudflare/vitest-plugin`, the renamed `@cloudflare/vitest-pool-workers`. `workers-oauth-provider` stays on 0.10: 1.x binds every token to one resource, and this Worker advertises three (`/mcp`, `/sse` and the bare origin), so its grants can carry any of them.
 
 ## 2026-11-01 — 0.7.2
