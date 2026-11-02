@@ -18,10 +18,3 @@ overrides:
   "nanoid@<3.3.18": "^3.3.18"
   # GHSA-fxqj-rqcc-2cmp: same vite -> postcss path; vite resolves it one patch short.
   "postcss@<8.5.23": "^8.5.23"
-  # GHSA-6qxp-vccf-f47h, GHSA-jm63-cq47-j5jp, GHSA-46jr-4wx8-v453,
-  # GHSA-f897-62hf-6gxq: agents 0.23 pins MCP SDK v2 at 2.0.0 (agents/mcp
-  # imports it). 2.3.1 is what agents 0.29 pins. Drop when agents moves past it.
-  "@modelcontextprotocol/server@<2.3.0": "~2.3.1"
-  "@modelcontextprotocol/client@<2.3.0": "~2.3.1"
-  # GHSA-587h-7wmj-h5pm: agents and vitest resolve vite 8.1.5.
-  "vite@>=8.0.0 <8.1.6": "^8.1.6"

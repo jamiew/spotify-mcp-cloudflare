@@ -78,7 +78,10 @@ Playback and queue writes remain intentionally untested without explicit permiss
   existing-grant migration. Account for simultaneous sessions and refresh rotation.
 - Configure canonical resource/audience binding and evaluate CIMD with safe
   metadata fetching. Preserve deliberate legacy-client compatibility rather than
-  equating DCR support with current-protocol conformance.
+  equating DCR support with current-protocol conformance. This is the
+  `workers-oauth-provider` 1.x upgrade: it binds each token to one resource, and
+  live grants carry `/mcp`, `/sse` or the bare origin. Choose between dropping
+  `/sse`, declaring each resource, or one forced sign-in before upgrading.
 - Provide remote disconnect/data deletion and explicit grant/session revocation.
   An allowlist edit is not complete data cleanup.
 - Add per-user/IP auth and tool abuse controls plus an app/developer quota budget
