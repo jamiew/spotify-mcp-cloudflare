@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2026-11-01 — 0.8.0
 
 - Playback controls and `add_to_queue` no longer report "unexpected shape" after Spotify did the action. Spotify now answers player writes with HTTP 200 and an opaque plain-text body, and the client tried to parse it as JSON. Writes no longer read the response body; reads still validate theirs.
 - A rejected request (HTTP 400 and other 4xx) no longer says "Try again shortly". The error passes Spotify's reason through, such as "Invalid base62 id". Only 429 and 5xx errors suggest retrying.
