@@ -306,7 +306,7 @@ describe("registerTools", () => {
 					is_playing: true,
 					progress_ms: 1000,
 					item: null,
-					currently_playing_type: "episode",
+					currently_playing_type: "ad",
 					device: { id: "d1", name: "Phone", is_active: true },
 				}),
 		});
@@ -314,8 +314,49 @@ describe("registerTools", () => {
 			is_playing: true,
 			track: null,
 			device: { name: "Phone" },
-			message: "Current item is episode; only tracks are described.",
+			message: "Current item is ad; only tracks and episodes are described.",
 		});
+	});
+
+	it("describes a playing or queued podcast episode with its show as the artist", async () => {
+		const episode = {
+			id: "e1",
+			name: "Pilot",
+			type: "episode",
+			release_date: "2024-05-01",
+			duration_ms: 3000,
+			show: { id: "s1", name: "The Show" },
+		};
+		const { call } = await connect({
+			"GET /v1/me/player": () =>
+				Response.json({ is_playing: true, item: episode, currently_playing_type: "episode" }),
+			"GET /v1/me/player/queue": () =>
+				Response.json({ currently_playing: episode, queue: [track("t1", "Next")] }),
+		});
+		const described = {
+			id: "e1",
+			name: "Pilot",
+			artist: "The Show",
+			released: "2024-05-01",
+			type: "episode",
+			duration_ms: 3000,
+		};
+		expect((await call("get_playback_state")).structuredContent).toEqual({
+			is_playing: true,
+			track: described,
+		});
+		expect((await call("get_queue")).structuredContent).toEqual({
+			currently_playing: described,
+			queue: [{ id: "t1", name: "Next", artist: "Artist", album: "Album" }],
+		});
+	});
+
+	it("refuses to queue an album as an item and points at context_uri", async () => {
+		const { call, seen } = await connect({});
+		const res = await call("add_to_queue", { uri: "spotify:album:al1" });
+		expect(res.isError).toBe(true);
+		expect(res.content).toEqual([{ type: "text", text: expect.stringContaining("context_uri") }]);
+		expect(seen).toHaveLength(0);
 	});
 
 	it("fetches bounded playlist positions across short pages and reports progress", async () => {
