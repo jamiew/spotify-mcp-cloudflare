@@ -144,9 +144,14 @@ function mapError(e: unknown): ToolResult {
 				`Spotify refused this action (forbidden). The account may lack access.${detail}`,
 			);
 		}
-		return toolError(
-			`The request to Spotify failed (HTTP ${e.status}). Try again shortly.${detail}`,
-		);
+		// A bad request fails the same way every time; only server errors and
+		// rate limits can clear by waiting.
+		if (e.status === 429 || e.status >= 500) {
+			return toolError(
+				`The request to Spotify failed (HTTP ${e.status}). Try again shortly.${detail}`,
+			);
+		}
+		return toolError(`Spotify rejected the request (HTTP ${e.status}).${detail}`);
 	}
 	return toolError(e instanceof Error ? e.message : String(e));
 }

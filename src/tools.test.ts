@@ -160,6 +160,27 @@ describe("registerTools", () => {
 		]);
 	});
 
+	it("passes a 400 reason through without a retry hint, but keeps it for 5xx", async () => {
+		const { call } = await connect({
+			"GET /v1/me/top/artists": () =>
+				Response.json({ error: { status: 400, message: "Invalid base62 id" } }, { status: 400 }),
+			"GET /v1/me/top/tracks": () =>
+				Response.json({ error: { status: 503, message: "Service unavailable" } }, { status: 503 }),
+		});
+		expect((await call("get_top_items", { type: "artists" })).content).toEqual([
+			{
+				type: "text",
+				text: "Spotify rejected the request (HTTP 400). Spotify said: Invalid base62 id",
+			},
+		]);
+		expect((await call("get_top_items", { type: "tracks" })).content).toEqual([
+			{
+				type: "text",
+				text: "The request to Spotify failed (HTTP 503). Try again shortly. Spotify said: Service unavailable",
+			},
+		]);
+	});
+
 	it("add_to_queue accepts a share link without double-prefixing it", async () => {
 		const { call, seen } = await connect({
 			"POST /v1/me/player/queue": () => new Response(null, { status: 204 }),
