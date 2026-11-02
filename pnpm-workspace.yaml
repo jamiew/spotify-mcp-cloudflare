@@ -18,3 +18,5 @@ overrides:
   "nanoid@<3.3.18": "^3.3.18"
   # GHSA-fxqj-rqcc-2cmp: same vite -> postcss path; vite resolves it one patch short.
   "postcss@<8.5.23": "^8.5.23"
+  "markdown-it@<15.0.3": "^15.0.3"
+  "smol-toml@<1.9.0": "^1.9.0"
