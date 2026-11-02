@@ -3,7 +3,7 @@
 ## Unreleased
 
 - Playback controls and `add_to_queue` no longer report "unexpected shape" after Spotify did the action. Spotify now answers player writes with HTTP 200 and an opaque plain-text body, and the client tried to parse it as JSON. Writes no longer read the response body; reads still validate theirs.
-- `agents` 0.23 → 0.32. `McpAgent` still runs on MCP SDK v1; since 0.31 `agents` no longer installs it, so `@modelcontextprotocol/sdk` 1.32.2 and `@modelcontextprotocol/server` 2.4.0 are pinned to the versions it expects. The pnpm overrides for its old MCP SDK v2 and `vite` are gone. Tests move to vitest 5 and `@cloudflare/vitest-plugin`, the renamed `@cloudflare/vitest-pool-workers`. `workers-oauth-provider` stays on 0.10: 1.x binds every token to one resource, and this Worker's grants carry three (`/mcp`, `/sse` and the bare origin).
+- `agents` 0.23 → 0.32. `McpAgent` still runs on MCP SDK v1; since 0.31 `agents` no longer installs it, so `@modelcontextprotocol/sdk` 1.32.2 and `@modelcontextprotocol/server` 2.4.0 are pinned to the versions it expects. The pnpm overrides for its old MCP SDK v2 and `vite` are gone. Tests move to vitest 5 and `@cloudflare/vitest-plugin`, the renamed `@cloudflare/vitest-pool-workers`. `workers-oauth-provider` stays on 0.10: 1.x binds every token to one resource, and this Worker advertises three (`/mcp`, `/sse` and the bare origin), so its grants can carry any of them.
 
 ## 2026-11-01 — 0.7.2
 
