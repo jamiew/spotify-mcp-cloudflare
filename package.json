@@ -35,19 +35,19 @@
 		"@modelcontextprotocol/sdk": "1.32.2",
 		"@modelcontextprotocol/server": "2.4.0",
 		"agents": "^0.32.0",
-		"hono": "^4.13.14",
+		"hono": "^4.13.16",
 		"tsx": "4.23.15",
 		"zod": "^4.6.7"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.6.4",
-		"@cloudflare/vitest-plugin": "^1.4.11",
+		"@biomejs/biome": "^2.6.5",
+		"@cloudflare/vitest-plugin": "^1.6.0",
 		"@types/node": "^22.20.5",
-		"@vitest/coverage-istanbul": "^5.0.5",
+		"@vitest/coverage-istanbul": "^5.1.0",
 		"markdownlint-cli2": "^0.23.3",
 		"typescript": "^7.0.2",
-		"vitest": "^5.0.5",
-		"wrangler": "^4.156.0"
+		"vitest": "^5.1.0",
+		"wrangler": "^4.158.0"
 	},
 	"packageManager": "pnpm@11.17.0"
 }

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Dependencies refreshed within their majors (`hono` 4.13.16, `wrangler` 4.158, `vitest` 5.1, `@cloudflare/vitest-plugin` 1.6, `biome` 2.6.5). A pnpm override lifts `katex` to 0.18.2 for GHSA-238p-pmpm-9mq7, a low-severity dev-only path through `markdownlint-cli2`.
+
 ## 2026-11-01 — 0.8.0
 
 - Playback controls and `add_to_queue` no longer report "unexpected shape" after Spotify did the action. Spotify now answers player writes with HTTP 200 and an opaque plain-text body, and the client tried to parse it as JSON. Writes no longer read the response body; reads still validate theirs.
