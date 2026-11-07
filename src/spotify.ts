@@ -157,6 +157,24 @@ export class SpotifyClient {
 		return this.signal ? AbortSignal.any([this.signal, timeout]) : timeout;
 	}
 
+	/**
+	 * Waits for a token under this call's cancellation and deadline. Only the
+	 * wait ends: the provider's work carries on, so a refresh that lands late
+	 * still saves its rotated refresh token.
+	 */
+	private async token(get: () => Promise<string>): Promise<string> {
+		const signal = this.attemptSignal();
+		signal.throwIfAborted();
+		const aborted = Promise.withResolvers<never>();
+		const onAbort = () => aborted.reject(signal.reason);
+		signal.addEventListener("abort", onAbort, { once: true });
+		try {
+			return await Promise.race([get(), aborted.promise]);
+		} finally {
+			signal.removeEventListener("abort", onAbort);
+		}
+	}
+
 	/** Request and Zod-parse a JSON response. Empty bodies parse as undefined. */
 	async request<T>(path: string, schema: z.ZodType<T>, spec: RequestSpec = {}): Promise<T> {
 		const response = await this.fetchOk(path, spec);
@@ -225,7 +243,7 @@ export class SpotifyClient {
 	/** Sends the request, handling 401 refresh and 429 backoff; throws on any non-2xx. */
 	private async fetchOk(path: string, spec: RequestSpec): Promise<Response> {
 		const url = this.buildUrl(path, spec.query);
-		let token = await this.tokenProvider.getAccessToken();
+		let token = await this.token(() => this.tokenProvider.getAccessToken());
 		let refreshed = false;
 		let rateLimitRetries = 0;
 
@@ -235,7 +253,7 @@ export class SpotifyClient {
 			if (response.status === 401) {
 				if (refreshed) throw new SpotifyAuthError();
 				refreshed = true;
-				token = await this.tokenProvider.refreshAccessToken();
+				token = await this.token(() => this.tokenProvider.refreshAccessToken());
 				continue;
 			}
 

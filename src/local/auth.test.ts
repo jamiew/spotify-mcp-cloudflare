@@ -4,6 +4,8 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
+import { SpotifyClient } from "../spotify";
 import { SPOTIFY_SCOPES, SPOTIFY_TOKEN_URL } from "../utils";
 import { LocalTokenProvider, login } from "./auth";
 import { LocalTokenStore } from "./token-store";
@@ -218,5 +220,40 @@ describe("local token ownership and rotation", () => {
 		await expect(provider.getAccessToken()).rejects.toThrow("safely save");
 		expect(fetchImpl).toHaveBeenCalledTimes(1);
 		await provider.close();
+	});
+
+	it("releases a cancelled caller but still saves a refresh that lands later", async () => {
+		const { store } = await temporaryStore();
+		await store.write({
+			version: 1,
+			clientId: "client",
+			accessToken: "expired",
+			refreshToken: "old",
+			expiresAt: 1,
+			scope: SPOTIFY_SCOPES,
+		});
+		const requested = Promise.withResolvers<void>();
+		const answer = Promise.withResolvers<Response>();
+		const provider = await loadStoredLogin(store, "client", () => {
+			requested.resolve();
+			return answer.promise;
+		});
+		const cancel = new AbortController();
+		const spotify = new SpotifyClient({ tokenProvider: provider, signal: cancel.signal });
+		const call = spotify.request("/me", z.unknown());
+		await requested.promise;
+		cancel.abort(new Error("cancelled by client"));
+		await expect(call).rejects.toThrow("cancelled by client");
+		answer.resolve(
+			Response.json({
+				access_token: "new",
+				refresh_token: "rotated",
+				token_type: "Bearer",
+				expires_in: 3600,
+			}),
+		);
+		// close waits for the refresh in flight to finish saving.
+		await provider.close();
+		expect(await store.read()).toMatchObject({ accessToken: "new", refreshToken: "rotated" });
 	});
 });

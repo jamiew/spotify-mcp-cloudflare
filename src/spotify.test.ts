@@ -192,6 +192,35 @@ describe("SpotifyClient", () => {
 		});
 	});
 
+	describe("with a stalled token provider", () => {
+		const stalled = {
+			getAccessToken: () => new Promise<string>(() => {}),
+			refreshAccessToken: () => new Promise<string>(() => {}),
+		};
+
+		it("releases the caller when its signal aborts", async () => {
+			const cancel = new AbortController();
+			const { client, seen } = makeClient({}, { tokenProvider: stalled });
+			const pending = client.withSignal(cancel.signal).request("/thing", nameSchema);
+			cancel.abort(new Error("cancelled by client"));
+			await expect(pending).rejects.toThrow("cancelled by client");
+			expect(seen).toEqual([]);
+		});
+
+		it("releases the caller at the deadline, refresh included", async () => {
+			const { client } = makeClient(
+				{ "GET /v1/thing": () => Response.json({}, { status: 401 }) },
+				{
+					tokenProvider: { ...stalled, getAccessToken: async () => "tok" },
+					timeoutMs: 20,
+				},
+			);
+			await expect(client.request("/thing", nameSchema)).rejects.toMatchObject({
+				name: "TimeoutError",
+			});
+		});
+	});
+
 	describe("withFallback", () => {
 		it("falls back to legacy on 404 and caches the family", async () => {
 			const { client, seen } = makeClient({
