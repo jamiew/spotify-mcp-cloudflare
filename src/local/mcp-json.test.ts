@@ -1,7 +1,7 @@
 // Launches the local entry from .mcp.json exactly as a client would, with
-// synthetic tokens, and checks the tool surface on both protocol eras. Listing
-// tools never calls Spotify, so this needs no network or secrets.
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+// synthetic tokens or none, and checks the tool surface on both protocol eras.
+// Listing tools never calls Spotify, so this needs no network or secrets.
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -86,6 +86,41 @@ describe(".mcp.json local entry", () => {
 						expect(hints.destructiveHint, tool.name).toBeTypeOf("boolean");
 					}
 				}
+			} finally {
+				await client.close();
+			}
+		},
+		30_000,
+	);
+
+	it.each([
+		["no SPOTIFY_* environment", false],
+		["a client ID but no login", true],
+	] as const)(
+		"starts and lists tools with %s",
+		async (_label, withClientId) => {
+			const config = mcpJson.parse(JSON.parse(await readFile(join(ROOT, ".mcp.json"), "utf8")));
+			const entry = config.mcpServers["spotify-local"];
+			const expand = (value: string) => value.replace(/\$\{CLAUDE_PROJECT_DIR:-\.\}/g, ROOT);
+			const directory = await mkdtemp(join(tmpdir(), "spotify-mcp-json-test-"));
+			directories.push(directory);
+			const client = new Client({ name: "mcp-json-test", version: "0" });
+			await client.connect(
+				new StdioClientTransport({
+					command: expand(entry.command),
+					args: entry.args.map(expand),
+					env: withClientId
+						? { SPOTIFY_CLIENT_ID: "synthetic-client", SPOTIFY_MCP_STATE_DIR: directory }
+						: {},
+				}),
+			);
+			try {
+				expect((await client.listTools()).tools.length).toBeGreaterThan(0);
+				const result = await client.callTool({ name: "get_me", arguments: {} });
+				expect(result.isError).toBe(true);
+				expect(JSON.stringify(result.content)).toMatch(/SPOTIFY_CLIENT_ID.*pnpm run login/);
+				// No lock is held, so pnpm run login can run while this server does.
+				expect(await readdir(directory)).not.toContain("owner.lock");
 			} finally {
 				await client.close();
 			}

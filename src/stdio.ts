@@ -2,7 +2,16 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { LocalTokenProvider, login } from "./local/auth";
 import { LocalTokenStore, stateDirectory } from "./local/token-store";
 import { createSpotifyServer } from "./server";
-import { SpotifyClient } from "./spotify";
+import { SpotifyClient, type TokenProvider } from "./spotify";
+
+const NOT_SET_UP =
+	"Spotify isn't set up for this local server. Set SPOTIFY_CLIENT_ID, run pnpm run login, then restart the server.";
+
+/** Lets clients start the server and list tools before anyone has logged in. */
+const notSetUp: TokenProvider = {
+	getAccessToken: () => Promise.reject(new Error(NOT_SET_UP)),
+	refreshAccessToken: () => Promise.reject(new Error(NOT_SET_UP)),
+};
 
 async function main(): Promise<void> {
 	const [command, ...extra] = process.argv.slice(2);
@@ -10,7 +19,7 @@ async function main(): Promise<void> {
 		throw new Error("Usage: pnpm --silent stdio | pnpm run login | pnpm signout");
 	}
 	const clientId = process.env.SPOTIFY_CLIENT_ID?.trim();
-	if (command !== "signout" && !clientId) {
+	if (command === "login" && !clientId) {
 		throw new Error(
 			"Set SPOTIFY_CLIENT_ID to your Spotify app's public client ID. No client secret is used locally.",
 		);
@@ -21,18 +30,17 @@ async function main(): Promise<void> {
 	process.once("SIGTERM", cancel);
 	let store: LocalTokenStore | undefined;
 	try {
-		store = await LocalTokenStore.acquire(stateDirectory());
+		// Serving without a client ID never touches the store, so it can't block a login.
+		if (command !== undefined || clientId) store = await LocalTokenStore.acquire(stateDirectory());
 		cancellation.signal.throwIfAborted();
-		if (command === "signout") {
+		if (command === "signout" && store) {
 			await store.clear();
 			console.error(
 				"Local Spotify tokens removed. To revoke Spotify's app grant too, use https://www.spotify.com/account/apps/.",
 			);
 			return;
 		}
-		// Narrow independently of the command so credentials never enter a fallback flow.
-		if (!clientId) throw new Error("SPOTIFY_CLIENT_ID is required.");
-		if (command === "login") {
+		if (command === "login" && clientId && store) {
 			console.error(
 				"Register http://127.0.0.1:8888/callback in your Spotify app. Open the following URL within five minutes:",
 			);
@@ -45,8 +53,13 @@ async function main(): Promise<void> {
 			console.error("Spotify login saved. Start the local server with pnpm --silent stdio.");
 			return;
 		}
-		const provider = await LocalTokenProvider.load(store, clientId);
-		const client = new SpotifyClient({ tokenProvider: provider });
+		const provider = clientId && store ? await LocalTokenProvider.load(store, clientId) : undefined;
+		if (!provider) {
+			// Free the lock so pnpm run login works while this server runs.
+			await store?.close();
+			store = undefined;
+		}
+		const client = new SpotifyClient({ tokenProvider: provider ?? notSetUp });
 		// One server per connection; the opening exchange picks the protocol era.
 		const stopped = Promise.withResolvers<void>();
 		const stop = () => stopped.resolve();
@@ -66,7 +79,7 @@ async function main(): Promise<void> {
 				await handle.close();
 			} finally {
 				// Wait for any refresh/save before handing the grant to another process.
-				await provider.close();
+				await provider?.close();
 			}
 		}
 	} finally {

@@ -42,9 +42,11 @@ with no session, so the server can't ask them anything (elicitation). `pnpm e2e`
 and `src/tools.test.ts` cover both lanes; keep it that way.
 
 `.mcp.json` has two entries: `spotify` is the deployed Worker and
-`spotify-local` runs this checkout's stdio server. The local one needs
-`SPOTIFY_CLIENT_ID` in the environment and a prior `pnpm run login`.
-`src/local/mcp-json.test.ts` launches that exact entry on both eras.
+`spotify-local` runs this checkout's stdio server. It starts without
+credentials so clients can list tools; tool calls need `SPOTIFY_CLIENT_ID` in
+the environment and a prior `pnpm run login`, and say so when either is missing.
+`src/local/mcp-json.test.ts` launches that exact entry on both eras, with and
+without credentials.
 
 ## Regimes
 

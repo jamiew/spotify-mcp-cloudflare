@@ -213,14 +213,14 @@ export class LocalTokenProvider implements TokenProvider {
 		private readonly fetchImpl: typeof fetch,
 	) {}
 
+	/** Resolves undefined when nothing has logged in yet. */
 	static async load(
 		store: LocalTokenStore,
 		clientId: string,
 		fetchImpl: typeof fetch = fetch,
-	): Promise<LocalTokenProvider> {
+	): Promise<LocalTokenProvider | undefined> {
 		const tokens = await store.read();
-		if (!tokens)
-			throw new Error("No local Spotify login. Run pnpm run login before starting the server.");
+		if (!tokens) return undefined;
 		if (tokens.clientId !== clientId)
 			throw new Error(
 				"The stored login belongs to a different SPOTIFY_CLIENT_ID. Run pnpm run login again.",

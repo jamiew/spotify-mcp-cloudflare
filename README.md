@@ -20,8 +20,9 @@ The invited instance is **`https://spotify-mcp-cloudflare.jamie-7e9.workers.dev/
 invitation and access through both the Worker and Spotify dashboard allowlists.
 Its deployed revision can lag this branch. In the checked-in `.mcp.json`,
 `spotify` uses this restricted instance; replace its URL for your own deployment.
-`spotify-local` runs this checkout's stdio server; it needs `SPOTIFY_CLIENT_ID`
-exported and a prior `pnpm run login` (see below).
+`spotify-local` runs this checkout's stdio server. It starts and lists tools with
+no credentials; tools that call Spotify need `SPOTIFY_CLIENT_ID` exported and a
+prior `pnpm run login` (see below).
 
 ## Native local stdio
 

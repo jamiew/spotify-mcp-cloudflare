@@ -25,6 +25,14 @@ async function temporaryStore(): Promise<{ store: LocalTokenStore; directory: st
 	return { store, directory };
 }
 
+async function loadStoredLogin(
+	...args: Parameters<typeof LocalTokenProvider.load>
+): Promise<LocalTokenProvider> {
+	const provider = await LocalTokenProvider.load(...args);
+	if (!provider) throw new Error("expected a stored login");
+	return provider;
+}
+
 describe("local PKCE login", () => {
 	it("exchanges only the matching callback code, bound to the S256 verifier and public client", async () => {
 		let authorization: URL | undefined;
@@ -147,7 +155,7 @@ describe("local token ownership and rotation", () => {
 				expires_in: 3600,
 			});
 		};
-		const provider = await LocalTokenProvider.load(store, "public-client", fetchImpl);
+		const provider = await loadStoredLogin(store, "public-client", fetchImpl);
 		expect(
 			await Promise.all([
 				provider.getAccessToken(),
@@ -162,7 +170,7 @@ describe("local token ownership and rotation", () => {
 		await store.close();
 		const reopened = await LocalTokenStore.acquire(directory);
 		stores.push(reopened);
-		const next = await LocalTokenProvider.load(reopened, "public-client", fetchImpl);
+		const next = await loadStoredLogin(reopened, "public-client", fetchImpl);
 		expect(await next.refreshAccessToken()).toBe("access-2");
 		expect((await reopened.read())?.refreshToken).toBe("rotated-refresh");
 		await next.close();
@@ -204,7 +212,7 @@ describe("local token ownership and rotation", () => {
 				expires_in: 3600,
 			}),
 		);
-		const provider = await LocalTokenProvider.load(store, "client", fetchImpl);
+		const provider = await loadStoredLogin(store, "client", fetchImpl);
 		vi.spyOn(store, "write").mockRejectedValue(new Error("disk full"));
 		await expect(provider.getAccessToken()).rejects.toThrow("safely save");
 		await expect(provider.getAccessToken()).rejects.toThrow("safely save");
