@@ -1,8 +1,8 @@
 // Bundle-size guard: reads `wrangler deploy --dry-run` output on stdin and
 // fails if the gzipped worker exceeds the budget. Guards against dependency
-// bloat from automated edits. Raised from 600 when agents 0.23 started
-// importing MCP SDK v2 next to v1 (~670 KiB); drops back once we're on v2 only.
-const BUDGET_GZIP_KIB = 800;
+// bloat from automated edits. MCP SDK v2 alone, without McpAgent and SDK v1,
+// builds to ~313 KiB; the budget leaves headroom without hiding a second SDK.
+const BUDGET_GZIP_KIB = 450;
 
 let input = "";
 process.stdin.on("data", (chunk) => {

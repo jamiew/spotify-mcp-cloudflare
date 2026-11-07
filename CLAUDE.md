@@ -19,22 +19,27 @@ with live MCP tool calls before reporting done. Prefer real infrastructure over
 new mocks; where a fake is unavoidable, treat everything behind it as untested
 and cover it in `scripts/e2e.ts` instead.
 
-## Two traps when verifying live
+## Traps when verifying live
 
 **Scope changes need the user to re-authenticate.** Adding a scope to
 `SPOTIFY_SCOPES` does not upgrade the existing token — it keeps the scopes it was
 minted with. Ask the user to run `/mcp` and reconnect, then retest.
 
-Reconnecting alone used to be insufficient: the Durable Object seeded its token
-once and then refreshed the old grant forever, so a new scope could never take
-effect. It now stores the grant's `scope` and re-seeds from `props` whenever that
-string changes. If a tool still reports a missing scope after a reconnect, check
-that comparison in `init()` before suspecting Spotify's consent screen.
+Each reconnect makes a new grant with its own Spotify tokens, and the grant is
+the only place they live: `tokenExchangeCallback` in `src/index.ts` renews them
+on MCP refresh and writes them back. There is no per-session copy to go stale.
+If a tool still reports a missing scope after a reconnect, check the client
+actually started a new authorization before suspecting Spotify's consent screen.
 
-**`withFallback` caches per Durable Object.** A fallback fix may not take effect
-until the DO restarts, so a retest immediately after `wrangler deploy` can still
-show the old failure. If a fix looks like it didn't work, wait and retry before
-concluding it's wrong.
+**`withFallback` caches per Worker isolate.** A fallback fix may not take effect
+until old isolates retire, so a retest immediately after `wrangler deploy` can
+still show the old failure. If a fix looks like it didn't work, wait and retry
+before concluding it's wrong.
+
+**Test both protocol eras.** The Worker serves 2026-07-28 clients and 2025-era
+ones, and most hosts are still 2025-era. Those get a fresh server per request
+with no session, so the server can't ask them anything (elicitation). `pnpm e2e`
+and `src/tools.test.ts` cover both lanes; keep it that way.
 
 ## Regimes
 

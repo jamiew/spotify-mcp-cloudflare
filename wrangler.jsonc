@@ -11,26 +11,27 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "spotify-mcp-cloudflare",
 	"main": "src/index.ts",
-	"compatibility_date": "2025-03-10",
+	"compatibility_date": "2026-10-23",
 	"compatibility_flags": [
 		"nodejs_compat"
 	],
+	// v1 held per-session token copies for McpAgent. The Worker is stateless
+	// now and the OAuth grant owns the tokens, so v2 deletes that class and its
+	// storage on deploy. Keep both entries: migrations are append-only history.
 	"migrations": [
 		{
 			"tag": "v1",
 			"new_sqlite_classes": [
 				"SpotifyMCP"
 			]
+		},
+		{
+			"tag": "v2",
+			"deleted_classes": [
+				"SpotifyMCP"
+			]
 		}
 	],
-	"durable_objects": {
-		"bindings": [
-			{
-				"name": "MCP_OBJECT",
-				"class_name": "SpotifyMCP"
-			}
-		]
-	},
 	"workers_dev": true,
 	// Custom domain: requires the zone to be hosted on Cloudflare (jamiedubs.com
 	// is currently on Namecheap DNS). Uncomment once the zone is on this account.

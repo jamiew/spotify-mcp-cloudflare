@@ -1,4 +1,4 @@
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { LocalTokenProvider, login } from "./local/auth";
 import { LocalTokenStore, stateDirectory } from "./local/token-store";
 import { createSpotifyServer } from "./server";
@@ -47,26 +47,23 @@ async function main(): Promise<void> {
 		}
 		const provider = await LocalTokenProvider.load(store, clientId);
 		const client = new SpotifyClient({ tokenProvider: provider });
-		const server = createSpotifyServer(() => client);
-		const transport = new StdioServerTransport();
-		const disconnected = new AbortController();
-		const disconnect = () => disconnected.abort();
-		const stop = AbortSignal.any([cancellation.signal, disconnected.signal]);
-		process.stdin.once("end", disconnect);
-		process.stdin.once("error", disconnect);
-		server.server.onclose = disconnect;
+		// One server per connection; the opening exchange picks the protocol era.
+		const stopped = Promise.withResolvers<void>();
+		const stop = () => stopped.resolve();
+		process.stdin.once("end", stop);
+		process.stdin.once("error", stop);
+		cancellation.signal.addEventListener("abort", stop, { once: true });
+		const handle = serveStdio(() => createSpotifyServer(() => client), {
+			onerror: (error) => console.error(error.message),
+		});
 		try {
-			await server.connect(transport);
-			if (!stop.aborted && !process.stdin.readableEnded) {
-				await new Promise<void>((resolve) =>
-					stop.addEventListener("abort", () => resolve(), { once: true }),
-				);
-			}
+			if (!cancellation.signal.aborted && !process.stdin.readableEnded) await stopped.promise;
 		} finally {
-			process.stdin.off("end", disconnect);
-			process.stdin.off("error", disconnect);
+			process.stdin.off("end", stop);
+			process.stdin.off("error", stop);
+			cancellation.signal.removeEventListener("abort", stop);
 			try {
-				await server.close();
+				await handle.close();
 			} finally {
 				// Wait for any refresh/save before handing the grant to another process.
 				await provider.close();

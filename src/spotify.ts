@@ -87,6 +87,11 @@ export interface SpotifyClientOptions {
 	/** Surface longer Retry-After values instead of retrying before Spotify permits. */
 	maxRetryAfterSeconds?: number;
 	sleep?: (ms: number) => Promise<void>;
+	/**
+	 * Regime answers to share between clients. The regime belongs to the app,
+	 * not the user, so a stateless server passes one set for every request.
+	 */
+	fallbackFamilies?: Set<string>;
 }
 
 const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -102,8 +107,8 @@ export class SpotifyClient {
 	private readonly maxRateLimitRetries: number;
 	private readonly maxRetryAfterSeconds: number;
 	private readonly sleep: (ms: number) => Promise<void>;
-	/** Endpoint families confirmed to need their fallback path (cached per session). */
-	private readonly fallbackFamilies = new Set<string>();
+	/** Endpoint families confirmed to need their fallback path. */
+	private readonly fallbackFamilies: Set<string>;
 
 	constructor(options: SpotifyClientOptions) {
 		this.tokenProvider = options.tokenProvider;
@@ -113,6 +118,7 @@ export class SpotifyClient {
 		this.maxRateLimitRetries = options.maxRateLimitRetries ?? 2;
 		this.maxRetryAfterSeconds = options.maxRetryAfterSeconds ?? 5;
 		this.sleep = options.sleep ?? defaultSleep;
+		this.fallbackFamilies = options.fallbackFamilies ?? new Set();
 	}
 
 	/** Request and Zod-parse a JSON response. Empty bodies parse as undefined. */

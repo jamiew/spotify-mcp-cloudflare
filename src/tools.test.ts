@@ -1,45 +1,67 @@
-// Drives the real tool surface over an in-memory MCP transport with a fake
-// Spotify behind it, so argument validation, error mapping and output shaping
-// are exercised the way a client sees them.
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+// Drives the real tool surface through a real MCP client with a fake Spotify
+// behind it, so argument validation, error mapping and output shaping are
+// exercised the way a client sees them. Every test runs on each lane a client
+// can reach this server through:
+//
+// - modern: the 2026-07-28 revision over the Worker's stateless HTTP handler.
+// - legacy-http: a 2025-era client on that same handler, which answers each
+//   POST with a fresh server and has no way to ask the client anything.
+// - legacy-session: a 2025-era connection that keeps its session, as stdio does.
 import {
+	Client,
 	type ClientCapabilities,
-	ElicitRequestSchema,
+	type ElicitRequest,
 	type ElicitResult,
-} from "@modelcontextprotocol/sdk/types.js";
+	InMemoryTransport,
+	StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
+import { createMcpHandler } from "agents/mcp/server";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 import { fakeSpotify, type SeenRequest, staticTokens } from "./fake-spotify";
 import { createSpotifyServer } from "./server";
 import { SpotifyClient } from "./spotify";
 
-async function connect(
-	routes: Record<string, (seen: SeenRequest) => Response>,
-	options: {
-		capabilities?: ClientCapabilities;
-		elicit?: () => ElicitResult | Promise<ElicitResult>;
-	} = {},
-) {
+const LANES = ["modern", "legacy-http", "legacy-session"] as const;
+type Lane = (typeof LANES)[number];
+type Routes = Record<string, (seen: SeenRequest) => Response>;
+type ConnectOptions = {
+	capabilities?: ClientCapabilities;
+	elicit?: (request: ElicitRequest) => ElicitResult | Promise<ElicitResult>;
+};
+
+async function connectOver(lane: Lane, routes: Routes, options: ConnectOptions = {}) {
 	const fake = fakeSpotify(routes);
 	const spotify = new SpotifyClient({
 		tokenProvider: staticTokens(),
 		fetchImpl: fake.fetchImpl,
 		sleep: async () => {},
 	});
-	const server = createSpotifyServer(() => spotify);
-	const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-	await server.connect(serverTransport);
 	const client = new Client(
 		{ name: "test-client", version: "0" },
-		{ capabilities: options.capabilities ?? {} },
+		{
+			capabilities: options.capabilities ?? {},
+			...(lane === "modern" ? { versionNegotiation: { mode: "auto" as const } } : {}),
+		},
 	);
-	if (options.elicit) client.setRequestHandler(ElicitRequestSchema, options.elicit);
-	await client.connect(clientTransport);
-	onTestFinished(async () => {
-		await client.close();
-		await server.close();
-	});
+	if (options.elicit) client.setRequestHandler("elicitation/create", options.elicit);
+	if (lane === "legacy-session") {
+		const server = createSpotifyServer(() => spotify);
+		const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+		await server.connect(serverTransport);
+		await client.connect(clientTransport);
+		onTestFinished(() => server.close());
+	} else {
+		// The handler the Worker serves, called in-process instead of over a socket.
+		const handler = createMcpHandler(() => createSpotifyServer(() => spotify));
+		await client.connect(
+			new StreamableHTTPClientTransport(new URL("https://example.com/mcp"), {
+				fetch: (url, init) => handler.fetch(new Request(url, init)),
+			}),
+		);
+	}
+	onTestFinished(() => client.close());
+	expect(client.getNegotiatedProtocolVersion() === "2026-07-28").toBe(lane === "modern");
 	// Discovering the tools enables the SDK client's advertised output validation.
 	await client.listTools();
 	const call = (name: string, args: Record<string, unknown> = {}) =>
@@ -54,7 +76,11 @@ const track = (id: string, name: string) => ({
 	album: { id: "al1", name: "Album" },
 });
 
-describe("registerTools", () => {
+describe.each(LANES)("registerTools over %s", (lane) => {
+	const connect = (routes: Routes, options?: ConnectOptions) => connectOver(lane, routes, options);
+	/** Stateless legacy HTTP keeps no session, so the server can never ask its client. */
+	const canAsk = lane !== "legacy-http";
+
 	it("keeps legacy optional fields while trimming Spotify payloads under output validation", async () => {
 		const { call } = await connect({
 			"GET /v1/artists/a1": () =>
@@ -379,7 +405,6 @@ describe("registerTools", () => {
 				name: "get_playlist",
 				arguments: { playlist_id: "p1", offset: 4, limit: 3, fetch_all: true, max_items: 3 },
 			},
-			undefined,
 			{ onprogress: (value) => progress.push(value.progress) },
 		);
 		expect(res.structuredContent).toMatchObject({
@@ -492,11 +517,13 @@ describe("registerTools", () => {
 		});
 	});
 
-	it.each<ElicitResult>([
-		{ action: "cancel" },
-		{ action: "decline" },
-		{ action: "accept", content: { confirm: false } },
-	])("does not remove tracks after an unconfirmed elicitation: %j", async (response) => {
+	it
+		.skipIf(!canAsk)
+		.each<ElicitResult>([
+			{ action: "cancel" },
+			{ action: "decline" },
+			{ action: "accept", content: { confirm: false } },
+		])("does not remove tracks after an unconfirmed elicitation: %j", async (response) => {
 		const { call, seen } = await connect(
 			{},
 			{ capabilities: { elicitation: { form: {} } }, elicit: () => response },
@@ -506,56 +533,73 @@ describe("registerTools", () => {
 		expect(seen).toEqual([]);
 	});
 
-	it("does not remove tracks when elicitation fails", async () => {
-		const { call, seen } = await connect(
-			{},
-			{
-				// Advertised support with no handler yields a real MCP MethodNotFound error.
-				capabilities: { elicitation: { form: {} } },
-			},
+	it.skipIf(!canAsk)("does not remove tracks when elicitation fails", async () => {
+		// Advertised support with no handler: the client can't answer the question.
+		const { call, seen } = await connect({}, { capabilities: { elicitation: { form: {} } } });
+		const failed = await call("remove_tracks_from_playlist", {
+			playlist_id: "p1",
+			uris: ["t1"],
+		}).then(
+			(result) => result.isError === true,
+			() => true,
 		);
-		expect(
-			(await call("remove_tracks_from_playlist", { playlist_id: "p1", uris: ["t1"] })).isError,
-		).toBe(true);
+		expect(failed).toBe(true);
 		expect(seen).toEqual([]);
 	});
 
-	it("requires explicit acceptance without code generation and returns the new snapshot", async () => {
-		let confirmed = false;
+	// A bare `elicitation: {}` predates elicitation modes and means form support.
+	it.skipIf(!canAsk).each<ClientCapabilities>([{ elicitation: { form: {} } }, { elicitation: {} }])(
+		"requires explicit acceptance without code generation and returns the new snapshot: %j",
+		async (capabilities) => {
+			let asked = "";
+			const { call } = await connect(
+				{
+					"DELETE /v1/playlists/p1/items": () => {
+						expect(asked).toContain("Remove all occurrences of 1 track URI(s) from playlist p1?");
+						return Response.json({ snapshot_id: "s2" });
+					},
+				},
+				{
+					capabilities,
+					elicit: (request) => {
+						asked = request.params.message;
+						return { action: "accept", content: { confirm: true } };
+					},
+				},
+			);
+			vi.stubGlobal(
+				"Function",
+				class {
+					constructor() {
+						throw new EvalError("Code generation from strings disallowed for this context");
+					}
+				},
+			);
+			onTestFinished(() => {
+				vi.unstubAllGlobals();
+			});
+			expect(
+				(await call("remove_tracks_from_playlist", { playlist_id: "p1", uris: ["t1"] }))
+					.structuredContent,
+			).toMatchObject({
+				status: "success",
+				removed: 1,
+				snapshot_id: "s2",
+			});
+		},
+	);
+
+	it.runIf(!canAsk)("removes directly because stateless legacy HTTP cannot ask", async () => {
+		const elicit = vi.fn<() => ElicitResult>(() => ({ action: "decline" }));
 		const { call } = await connect(
-			{
-				"DELETE /v1/playlists/p1/items": () => {
-					expect(confirmed).toBe(true);
-					return Response.json({ snapshot_id: "s2" });
-				},
-			},
-			{
-				capabilities: { elicitation: { form: {} } },
-				elicit: () => {
-					confirmed = true;
-					return { action: "accept", content: { confirm: true } };
-				},
-			},
+			{ "DELETE /v1/playlists/p1/items": () => Response.json({ snapshot_id: "s2" }) },
+			{ capabilities: { elicitation: { form: {} } }, elicit },
 		);
-		vi.stubGlobal(
-			"Function",
-			class {
-				constructor() {
-					throw new EvalError("Code generation from strings disallowed for this context");
-				}
-			},
-		);
-		onTestFinished(() => {
-			vi.unstubAllGlobals();
-		});
 		expect(
 			(await call("remove_tracks_from_playlist", { playlist_id: "p1", uris: ["t1"] }))
 				.structuredContent,
-		).toMatchObject({
-			status: "success",
-			removed: 1,
-			snapshot_id: "s2",
-		});
+		).toMatchObject({ status: "success", removed: 1 });
+		expect(elicit).not.toHaveBeenCalled();
 	});
 
 	it.each<ClientCapabilities>([{}, { elicitation: { url: {} } }])(
