@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-07 — 0.9.3
+
+- Waiting for a Spotify token now honors the same cancellation and 15 second deadline as Spotify requests, on the Worker and local stdio alike. Before, a stalled token fetch or refresh kept a cancelled call pending. Only the wait ends: a local refresh that answers after the caller gave up still saves its rotated refresh token.
+
 ## 2026-11-07 — 0.9.2
 
 - The local stdio server starts without `SPOTIFY_CLIENT_ID` or a prior login, so clients, registries and headless `.mcp.json` runs can initialize it and list tools. Tool calls that need Spotify return "Spotify isn't set up for this local server. Set SPOTIFY_CLIENT_ID, run pnpm run login, then restart the server." An unconfigured server holds no lock on the token store, so `pnpm run login` works while it runs. `login` still requires `SPOTIFY_CLIENT_ID`, and a mismatched or under-scoped stored login still stops startup.
