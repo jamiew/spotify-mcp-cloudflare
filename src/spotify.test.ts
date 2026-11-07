@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { fakeSpotify, type SeenRequest, staticTokens } from "./fake-spotify";
 import {
@@ -12,7 +12,7 @@ import {
 } from "./spotify";
 
 function makeClient(
-	routes: Record<string, (seen: SeenRequest) => Response>,
+	routes: Record<string, (seen: SeenRequest) => Response | Promise<Response>>,
 	overrides: Partial<ConstructorParameters<typeof SpotifyClient>[0]> = {},
 ) {
 	const fake = fakeSpotify(routes);
@@ -149,6 +149,47 @@ describe("SpotifyClient", () => {
 		});
 		const res = await client.request("/me/player", nameSchema.optional());
 		expect(res).toBeUndefined();
+	});
+
+	it("aborts an in-flight request when the caller's signal aborts", async () => {
+		const cancel = new AbortController();
+		const { client, seen } = makeClient({ "GET /v1/thing": () => new Promise<never>(() => {}) });
+		const pending = client.withSignal(cancel.signal).request("/thing", nameSchema);
+		await vi.waitFor(() => expect(seen).toHaveLength(1));
+		cancel.abort(new Error("cancelled by client"));
+		await expect(pending).rejects.toThrow("cancelled by client");
+		expect(seen[0]?.signal?.aborted).toBe(true);
+	});
+
+	it("aborts a pending Retry-After wait instead of retrying", async () => {
+		const cancel = new AbortController();
+		const { client, seen } = makeClient(
+			{
+				"GET /v1/thing": () => {
+					// The next macrotask, after the client has read the 429 and started waiting.
+					setTimeout(() => cancel.abort(new Error("cancelled by client")), 0);
+					return Response.json({}, { status: 429, headers: { "Retry-After": "5" } });
+				},
+			},
+			// The real sleep, deliberately: ignoring the signal would hold this test for 5 seconds.
+			{ sleep: undefined },
+		);
+		const started = Date.now();
+		await expect(client.withSignal(cancel.signal).request("/thing", nameSchema)).rejects.toThrow(
+			"cancelled by client",
+		);
+		expect(Date.now() - started).toBeLessThan(2000);
+		expect(seen).toHaveLength(1);
+	});
+
+	it("gives up on an attempt that outlives its deadline", async () => {
+		const { client } = makeClient(
+			{ "GET /v1/thing": () => new Promise<never>(() => {}) },
+			{ timeoutMs: 20 },
+		);
+		await expect(client.request("/thing", nameSchema)).rejects.toMatchObject({
+			name: "TimeoutError",
+		});
 	});
 
 	describe("withFallback", () => {

@@ -24,10 +24,11 @@ import { SpotifyClient } from "./spotify";
 
 const LANES = ["modern", "legacy-http", "legacy-session"] as const;
 type Lane = (typeof LANES)[number];
-type Routes = Record<string, (seen: SeenRequest) => Response>;
+type Routes = Record<string, (seen: SeenRequest) => Response | Promise<Response>>;
 type ConnectOptions = {
 	capabilities?: ClientCapabilities;
 	elicit?: (request: ElicitRequest) => ElicitResult | Promise<ElicitResult>;
+	timeoutMs?: number;
 };
 
 async function connectOver(lane: Lane, routes: Routes, options: ConnectOptions = {}) {
@@ -36,6 +37,7 @@ async function connectOver(lane: Lane, routes: Routes, options: ConnectOptions =
 		tokenProvider: staticTokens(),
 		fetchImpl: fake.fetchImpl,
 		sleep: async () => {},
+		...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
 	});
 	const client = new Client(
 		{ name: "test-client", version: "0" },
@@ -621,4 +623,84 @@ describe.each(LANES)("registerTools over %s", (lane) => {
 			});
 		},
 	);
+
+	// A 2025-era client cancels over stateless HTTP with a separate notification
+	// that reaches a fresh server, so only the per-attempt deadline bounds that lane.
+	it.skipIf(lane === "legacy-http")(
+		"stops the upstream request when the client cancels",
+		async () => {
+			const { client, seen } = await connect({ "GET /v1/me": () => new Promise<never>(() => {}) });
+			const cancel = new AbortController();
+			const pending = client.callTool({ name: "get_me", arguments: {} }, { signal: cancel.signal });
+			await vi.waitFor(() => expect(seen).toHaveLength(1));
+			cancel.abort();
+			await expect(pending).rejects.toThrow();
+			await vi.waitFor(() => expect(seen[0]?.signal?.aborted).toBe(true));
+		},
+	);
+
+	describe("set_playlist_cover", () => {
+		const jpeg = { "Content-Type": "image/jpeg" };
+		const setCover = (call: (name: string, args: Record<string, unknown>) => unknown) =>
+			call("set_playlist_cover", { playlist_id: "p1", image_url: "https://example.com/c.jpg" });
+
+		it("uploads a small JPEG as base64", async () => {
+			const { call, seen } = await connect({
+				"GET /c.jpg": () =>
+					new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), { headers: jpeg }),
+				"PUT /v1/playlists/p1/images": () => new Response(null, { status: 202 }),
+			});
+			expect(await setCover(call)).not.toHaveProperty("isError", true);
+			expect(seen.at(-1)).toMatchObject({ contentType: "image/jpeg", body: "/9j/2Q==" });
+		});
+
+		it("stops reading an oversized body that declares no length", async () => {
+			let pulls = 0;
+			const endless = new ReadableStream<Uint8Array>({
+				pull(controller) {
+					pulls += 1;
+					controller.enqueue(new Uint8Array(64 * 1024));
+				},
+			});
+			const { call, seen } = await connect({
+				"GET /c.jpg": () => new Response(endless, { headers: jpeg }),
+			});
+			expect(await setCover(call)).toMatchObject({
+				isError: true,
+				content: [{ text: expect.stringContaining("too big") }],
+			});
+			expect(pulls).toBeLessThan(10);
+			expect(seen.map((s) => s.method)).toEqual(["GET"]);
+		});
+
+		it("refuses a declared oversized body without reading it", async () => {
+			// Never produces a byte, so reading it would hang until the deadline.
+			const silent = new ReadableStream<Uint8Array>();
+			const { call } = await connect({
+				"GET /c.jpg": () =>
+					new Response(silent, { headers: { ...jpeg, "Content-Length": String(400 * 1024) } }),
+			});
+			expect(await setCover(call)).toMatchObject({
+				isError: true,
+				content: [{ text: expect.stringContaining("this one is 400 KB") }],
+			});
+		});
+
+		it("gives up on a body that stalls past the deadline", async () => {
+			const stalled = new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(new Uint8Array([0xff, 0xd8]));
+				},
+			});
+			const { call, seen } = await connect(
+				{ "GET /c.jpg": () => new Response(stalled, { headers: jpeg }) },
+				{ timeoutMs: 50 },
+			);
+			expect(await setCover(call)).toMatchObject({
+				isError: true,
+				content: [{ text: expect.stringContaining("timed out") }],
+			});
+			expect(seen.map((s) => s.method)).toEqual(["GET"]);
+		});
+	});
 });

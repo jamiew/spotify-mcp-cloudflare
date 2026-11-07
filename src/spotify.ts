@@ -1,6 +1,6 @@
 // Typed Spotify Web API client: transparent 401 refresh-and-retry, bounded 429
-// backoff, Zod-validated responses, and per-endpoint-family fallback between
-// the restricted (Feb 2026) and legacy API regimes.
+// backoff, per-attempt deadlines, Zod-validated responses, and per-endpoint-family
+// fallback between the restricted (Feb 2026) and legacy API regimes.
 
 import type { z } from "zod";
 
@@ -8,6 +8,8 @@ const API_BASE_URL = "https://api.spotify.com/v1";
 const MAX_RATE_LIMIT_RETRIES = 2;
 /** Longer Retry-After values go back to the caller instead of being waited out. */
 const MAX_RETRY_AFTER_SECONDS = 5;
+/** Deadline for one upstream attempt, headers and body together. */
+const DEFAULT_TIMEOUT_MS = 15_000;
 
 export class SpotifyApiError extends Error {
 	constructor(
@@ -85,26 +87,45 @@ export interface RequestSpec {
 export interface SpotifyClientOptions {
 	tokenProvider: TokenProvider;
 	fetchImpl?: typeof fetch;
-	sleep?: (ms: number) => Promise<void>;
+	sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 	/**
 	 * Regime answers to share between clients. The regime belongs to the app,
 	 * not the user, so a stateless server passes one set for every request.
 	 */
 	fallbackFamilies?: Set<string>;
+	/** Cancels in-flight requests and retry waits, usually the MCP request's signal. */
+	signal?: AbortSignal;
+	timeoutMs?: number;
 }
 
-const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
+	signal?.throwIfAborted();
+	const { promise, resolve, reject } = Promise.withResolvers<void>();
+	const onAbort = () => {
+		clearTimeout(timer);
+		reject(signal?.reason);
+	};
+	const timer = setTimeout(() => {
+		signal?.removeEventListener("abort", onAbort);
+		resolve();
+	}, ms);
+	signal?.addEventListener("abort", onAbort, { once: true });
+	return promise;
+}
 
 // 400 is here because the restricted /me/library endpoints reject rather than
 // 404 when the app is on the legacy regime.
 const REGIME_MISS_STATUSES = [400, 404, 405, 410];
 
 export class SpotifyClient {
+	private readonly options: SpotifyClientOptions;
 	private readonly tokenProvider: TokenProvider;
 	private readonly fetchImpl: typeof fetch;
-	private readonly sleep: (ms: number) => Promise<void>;
+	private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
 	/** Endpoint families confirmed to need their fallback path. */
 	private readonly fallbackFamilies: Set<string>;
+	private readonly signal: AbortSignal | undefined;
+	private readonly timeoutMs: number;
 
 	constructor(options: SpotifyClientOptions) {
 		this.tokenProvider = options.tokenProvider;
@@ -112,6 +133,28 @@ export class SpotifyClient {
 		this.fetchImpl = options.fetchImpl ?? fetch.bind(globalThis);
 		this.sleep = options.sleep ?? defaultSleep;
 		this.fallbackFamilies = options.fallbackFamilies ?? new Set();
+		this.signal = options.signal;
+		this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+		this.options = { ...options, fallbackFamilies: this.fallbackFamilies };
+	}
+
+	/** The same client, cancelled by `signal`. Regime answers stay shared. */
+	withSignal(signal: AbortSignal): SpotifyClient {
+		return new SpotifyClient({ ...this.options, signal });
+	}
+
+	/**
+	 * Fetches any URL, such as cover art, under this client's cancellation and
+	 * deadline. Readers of the body should check the returned signal too.
+	 */
+	async fetchExternal(url: string): Promise<{ response: Response; signal: AbortSignal }> {
+		const signal = this.attemptSignal();
+		return { response: await this.fetchImpl(url, { signal }), signal };
+	}
+
+	private attemptSignal(): AbortSignal {
+		const timeout = AbortSignal.timeout(this.timeoutMs);
+		return this.signal ? AbortSignal.any([this.signal, timeout]) : timeout;
 	}
 
 	/** Request and Zod-parse a JSON response. Empty bodies parse as undefined. */
@@ -208,7 +251,7 @@ export class SpotifyClient {
 					throw new RateLimitedError(waitSeconds);
 				}
 				rateLimitRetries += 1;
-				await this.sleep(waitSeconds * 1000);
+				await this.sleep(waitSeconds * 1000, this.signal);
 				continue;
 			}
 
@@ -267,6 +310,7 @@ export class SpotifyClient {
 		return this.fetchImpl(url, {
 			method: spec.method ?? "GET",
 			headers,
+			signal: this.attemptSignal(),
 			...(body !== undefined ? { body } : {}),
 		});
 	}

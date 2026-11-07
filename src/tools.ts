@@ -153,53 +153,72 @@ function mapError(e: unknown): ToolResult {
 		}
 		return toolError(`Spotify rejected the request (HTTP ${e.status}).${detail}`);
 	}
+	// Per-attempt deadline from SpotifyClient, for Spotify and cover downloads alike.
+	if (e instanceof Error && e.name === "TimeoutError") {
+		return toolError("The request timed out. Try again shortly.");
+	}
 	return toolError(e instanceof Error ? e.message : String(e));
 }
 
-/** Spotify's documented cap, counted against the base64 payload rather than the file. */
-const COVER_MAX_BASE64_CHARS = 256 * 1024;
+/** Spotify caps covers at 256 KB of base64, which is 192 KB of JPEG. */
+const COVER_MAX_BYTES = 192 * 1024;
 
 /**
  * Cover art goes up as base64, which no model can plausibly emit as a tool
- * argument, so the tool takes a URL and the Worker does the encoding.
+ * argument, so the tool takes a URL and the Worker does the encoding. The
+ * download stops as soon as it passes the cap or the deadline.
  */
-async function fetchCoverAsBase64(url: string): Promise<string> {
-	const response = await fetch(url);
+async function fetchCoverAsBase64(spotify: SpotifyClient, url: string): Promise<string> {
+	const { response, signal } = await spotify.fetchExternal(url);
 	if (!response.ok) {
+		await response.body?.cancel();
 		throw new Error(`Could not fetch that image (HTTP ${response.status}).`);
 	}
 	const contentType = response.headers.get("Content-Type") ?? "";
 	if (!contentType.startsWith("image/jpeg")) {
+		await response.body?.cancel();
 		throw new Error(
 			`Spotify only accepts JPEG cover art, but that URL served "${contentType || "an unknown type"}".`,
 		);
 	}
-	const bytes = new Uint8Array(await response.arrayBuffer());
-	// Chunked: spreading 256 KB of bytes into String.fromCharCode blows the stack.
-	let binary = "";
-	for (let i = 0; i < bytes.length; i += 0x8000) {
-		binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-	}
-	const base64 = btoa(binary);
-	if (base64.length > COVER_MAX_BASE64_CHARS) {
+	const declared = Number(response.headers.get("Content-Length"));
+	if (declared > COVER_MAX_BYTES) {
+		await response.body?.cancel();
 		throw new Error(
-			`That image is too big: Spotify caps covers at 256 KB encoded, this one is ${Math.round(base64.length / 1024)} KB.`,
+			`That image is too big: Spotify caps covers at 192 KB, this one is ${Math.round(declared / 1024)} KB.`,
 		);
 	}
-	return base64;
-}
-
-/** Wraps a tool handler so thrown errors become friendly MCP error results. */
-function guard<A, R extends ToolResult | InputRequiredResult = ToolResult>(
-	fn: (args: A, ctx: ServerContext) => Promise<R>,
-): (args: A, ctx: ServerContext) => Promise<R | ToolResult> {
-	return async (args, ctx) => {
+	const bytes = new Uint8Array(COVER_MAX_BYTES);
+	let length = 0;
+	if (response.body) {
+		const reader = response.body.getReader();
+		// Ends a stalled read; real fetch also errors the body on abort.
+		const stop = () => {
+			reader.cancel(signal.reason).catch(() => {});
+		};
+		signal.addEventListener("abort", stop, { once: true });
 		try {
-			return await fn(args, ctx);
-		} catch (e) {
-			return mapError(e);
+			for (;;) {
+				const { done, value } = await reader.read();
+				signal.throwIfAborted();
+				if (done) break;
+				if (length + value.length > COVER_MAX_BYTES) {
+					await reader.cancel();
+					throw new Error("That image is too big: Spotify caps covers at 192 KB.");
+				}
+				bytes.set(value, length);
+				length += value.length;
+			}
+		} finally {
+			signal.removeEventListener("abort", stop);
 		}
-	};
+	}
+	// Chunked: spreading 192 KB of bytes into String.fromCharCode blows the stack.
+	let binary = "";
+	for (let i = 0; i < length; i += 0x8000) {
+		binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + 0x8000, length)));
+	}
+	return btoa(binary);
 }
 
 const elicitationCapability = z
@@ -242,6 +261,22 @@ const destructive = { ...additive, destructiveHint: true, idempotentHint: true }
 const destructiveOnce = { ...destructive, idempotentHint: false };
 
 export function registerTools(server: McpServer, sp: () => SpotifyClient) {
+	/**
+	 * Hands each handler a client that the MCP request's cancellation aborts,
+	 * and turns thrown errors into friendly MCP error results.
+	 */
+	function guard<A, R extends ToolResult | InputRequiredResult = ToolResult>(
+		fn: (args: A, spotify: SpotifyClient, ctx: ServerContext) => Promise<R>,
+	): (args: A, ctx: ServerContext) => Promise<R | ToolResult> {
+		return async (args, ctx) => {
+			try {
+				return await fn(args, sp().withSignal(ctx.mcpReq.signal), ctx);
+			} catch (e) {
+				return mapError(e);
+			}
+		};
+	}
+
 	server.registerTool(
 		"get_me",
 		{
@@ -252,8 +287,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: readOnly,
 			outputSchema: outputSchemas.get_me,
 		},
-		guard(async () => {
-			const me = await getMe(sp());
+		guard(async (_args, spotify) => {
+			const me = await getMe(spotify);
 			return ok({
 				id: me.id,
 				...(me.display_name ? { display_name: me.display_name } : {}),
@@ -291,8 +326,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: lookup,
 			outputSchema: outputSchemas.search_music,
 		},
-		guard(async ({ query, types, limit, offset }) => {
-			const res = await search(sp(), query, types, limit, offset);
+		guard(async ({ query, types, limit, offset }, spotify) => {
+			const res = await search(spotify, query, types, limit, offset);
 			return ok({
 				...(res.tracks ? { tracks: res.tracks.map(compactTrack) } : {}),
 				...(res.artists ? { artists: res.artists.map(compactArtist) } : {}),
@@ -317,8 +352,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: lookup,
 			outputSchema: outputSchemas.get_tracks,
 		},
-		guard(async ({ ids }) => {
-			const tracks = await getTracks(sp(), ids);
+		guard(async ({ ids }, spotify) => {
+			const tracks = await getTracks(spotify, ids);
 			return ok({
 				tracks: tracks.map((t) => ({
 					...compactTrack(t),
@@ -349,7 +384,9 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: lookup,
 			outputSchema: outputSchemas.get_artist,
 		},
-		guard(async ({ ids }) => ok({ artists: (await getArtists(sp(), ids)).map(compactArtist) })),
+		guard(async ({ ids }, spotify) =>
+			ok({ artists: (await getArtists(spotify, ids)).map(compactArtist) }),
+		),
 	);
 
 	server.registerTool(
@@ -370,8 +407,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: lookup,
 			outputSchema: outputSchemas.get_artist_albums,
 		},
-		guard(async ({ id, include_groups, limit, offset }) => {
-			const page = await getArtistAlbums(sp(), id, {
+		guard(async ({ id, include_groups, limit, offset }, spotify) => {
+			const page = await getArtistAlbums(spotify, id, {
 				...(include_groups ? { includeGroups: include_groups } : {}),
 				limit,
 				offset,
@@ -396,8 +433,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: lookup,
 			outputSchema: outputSchemas.get_album,
 		},
-		guard(async ({ ids }) => {
-			const albums = await getAlbums(sp(), ids);
+		guard(async ({ ids }, spotify) => {
+			const albums = await getAlbums(spotify, ids);
 			return ok({
 				albums: albums.map((album) => ({
 					...compactAlbum(album),
@@ -423,8 +460,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: readOnly,
 			outputSchema: outputSchemas.list_playlists,
 		},
-		guard(async ({ limit, offset }) => {
-			const page = await getMyPlaylists(sp(), { limit, offset });
+		guard(async ({ limit, offset }, spotify) => {
+			const page = await getMyPlaylists(spotify, { limit, offset });
 			return ok({
 				total: page.total,
 				offset,
@@ -457,9 +494,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: lookup,
 			outputSchema: outputSchemas.get_playlist,
 		},
-		guard(async ({ playlist_id, limit, offset, fetch_all, max_items }, ctx) => {
-			const client = sp();
-			const details = await getPlaylist(client, playlist_id);
+		guard(async ({ playlist_id, limit, offset, fetch_all, max_items }, spotify, ctx) => {
+			const details = await getPlaylist(spotify, playlist_id);
 			const tracks: z.infer<typeof outputSchemas.get_playlist>["tracks"] = [];
 			const cap = fetch_all ? max_items : limit;
 			let total = details.items?.total ?? details.tracks?.total ?? null;
@@ -468,7 +504,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			do {
 				ctx.mcpReq.signal.throwIfAborted();
 				try {
-					const page = await getPlaylistTracks(client, playlist_id, {
+					const page = await getPlaylistTracks(spotify, playlist_id, {
 						limit: Math.min(limit, cap - tracks.length),
 						offset: offset + tracks.length,
 					});
@@ -538,8 +574,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: additive,
 			outputSchema: outputSchemas.create_playlist,
 		},
-		guard(async ({ name, description, public: isPublic, collaborative }) => {
-			const playlist = await createPlaylist(sp(), {
+		guard(async ({ name, description, public: isPublic, collaborative }, spotify) => {
+			const playlist = await createPlaylist(spotify, {
 				name,
 				...(description !== undefined ? { description } : {}),
 				isPublic,
@@ -563,11 +599,11 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: destructive,
 			outputSchema: outputSchemas.update_playlist_details,
 		},
-		guard(async ({ playlist_id, name, description, public: isPublic }) => {
+		guard(async ({ playlist_id, name, description, public: isPublic }, spotify) => {
 			if (name === undefined && description === undefined && isPublic === undefined) {
 				return toolError("Nothing to update - provide name, description or public.");
 			}
-			await updatePlaylistDetails(sp(), playlist_id, {
+			await updatePlaylistDetails(spotify, playlist_id, {
 				...(name !== undefined ? { name } : {}),
 				...(description !== undefined ? { description } : {}),
 				...(isPublic !== undefined ? { isPublic } : {}),
@@ -598,9 +634,9 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: additive,
 			outputSchema: outputSchemas.add_tracks_to_playlist,
 		},
-		guard(async ({ playlist_id, uris, position }) => {
+		guard(async ({ playlist_id, uris, position }, spotify) => {
 			const fullUris = uris.map((u) => toUri("track", u));
-			const snapshot = await addPlaylistTracks(sp(), playlist_id, fullUris, position);
+			const snapshot = await addPlaylistTracks(spotify, playlist_id, fullUris, position);
 			return ok({ added: fullUris.length, ...(snapshot ? { snapshot_id: snapshot } : {}) });
 		}),
 	);
@@ -621,42 +657,44 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: destructive,
 			outputSchema: outputSchemas.remove_tracks_from_playlist,
 		},
-		guard(async ({ playlist_id, uris }, ctx): Promise<ToolResult | InputRequiredResult> => {
-			const fullUris = uris.map((u) => toUri("track", u));
-			if (supportsFormElicitation(server, ctx)) {
-				// The client answers and retries this call; the answer arrives here.
-				if (inputResponse(ctx.mcpReq.inputResponses, "confirm").kind === "missing") {
-					return inputRequired({
-						inputRequests: {
-							confirm: inputRequired.elicit({
-								message: `Remove all occurrences of ${fullUris.length} track URI(s) from playlist ${playlist_id}?`,
-								requestedSchema: removalConfirmation,
-							}),
-						},
-					});
+		guard(
+			async ({ playlist_id, uris }, spotify, ctx): Promise<ToolResult | InputRequiredResult> => {
+				const fullUris = uris.map((u) => toUri("track", u));
+				if (supportsFormElicitation(server, ctx)) {
+					// The client answers and retries this call; the answer arrives here.
+					if (inputResponse(ctx.mcpReq.inputResponses, "confirm").kind === "missing") {
+						return inputRequired({
+							inputRequests: {
+								confirm: inputRequired.elicit({
+									message: `Remove all occurrences of ${fullUris.length} track URI(s) from playlist ${playlist_id}?`,
+									requestedSchema: removalConfirmation,
+								}),
+							},
+						});
+					}
+					// Decline, cancel and malformed answers all leave the playlist alone.
+					const answer = acceptedContent(ctx.mcpReq.inputResponses, "confirm", removalConfirmation);
+					if (answer?.confirm !== true) {
+						return ok(
+							{ status: "cancelled", message: "Removal cancelled.", removed: 0 },
+							"Removal cancelled.",
+						);
+					}
 				}
-				// Decline, cancel and malformed answers all leave the playlist alone.
-				const answer = acceptedContent(ctx.mcpReq.inputResponses, "confirm", removalConfirmation);
-				if (answer?.confirm !== true) {
-					return ok(
-						{ status: "cancelled", message: "Removal cancelled.", removed: 0 },
-						"Removal cancelled.",
-					);
-				}
-			}
-			ctx.mcpReq.signal.throwIfAborted();
-			const snapshot = await removePlaylistTracks(sp(), playlist_id, fullUris);
-			const message = `Removed all occurrences of ${fullUris.length} track URI(s).`;
-			return ok(
-				{
-					status: "success",
+				ctx.mcpReq.signal.throwIfAborted();
+				const snapshot = await removePlaylistTracks(spotify, playlist_id, fullUris);
+				const message = `Removed all occurrences of ${fullUris.length} track URI(s).`;
+				return ok(
+					{
+						status: "success",
+						message,
+						removed: fullUris.length,
+						...(snapshot ? { snapshot_id: snapshot } : {}),
+					},
 					message,
-					removed: fullUris.length,
-					...(snapshot ? { snapshot_id: snapshot } : {}),
-				},
-				message,
-			);
-		}),
+				);
+			},
+		),
 	);
 
 	server.registerTool(
@@ -694,15 +732,17 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: destructiveOnce,
 			outputSchema: outputSchemas.reorder_playlist,
 		},
-		guard(async ({ playlist_id, range_start, insert_before, range_length, snapshot_id }) => {
-			const snapshot = await reorderPlaylistTracks(sp(), playlist_id, {
-				rangeStart: range_start,
-				insertBefore: insert_before,
-				rangeLength: range_length,
-				...(snapshot_id !== undefined ? { snapshotId: snapshot_id } : {}),
-			});
-			return ok({ reordered: true, ...(snapshot ? { snapshot_id: snapshot } : {}) });
-		}),
+		guard(
+			async ({ playlist_id, range_start, insert_before, range_length, snapshot_id }, spotify) => {
+				const snapshot = await reorderPlaylistTracks(spotify, playlist_id, {
+					rangeStart: range_start,
+					insertBefore: insert_before,
+					rangeLength: range_length,
+					...(snapshot_id !== undefined ? { snapshotId: snapshot_id } : {}),
+				});
+				return ok({ reordered: true, ...(snapshot ? { snapshot_id: snapshot } : {}) });
+			},
+		),
 	);
 
 	server.registerTool(
@@ -723,11 +763,11 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			},
 			outputSchema: outputSchemas.set_playlist_cover,
 		},
-		guard(async ({ playlist_id, image_url }) => {
+		guard(async ({ playlist_id, image_url }, spotify) => {
 			if (!image_url.startsWith("https://")) {
 				return toolError("image_url must be an https URL.");
 			}
-			await setPlaylistCover(sp(), playlist_id, await fetchCoverAsBase64(image_url));
+			await setPlaylistCover(spotify, playlist_id, await fetchCoverAsBase64(spotify, image_url));
 			return okText("Cover art updated. Spotify can take a minute to show it everywhere.");
 		}),
 	);
@@ -741,8 +781,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: additiveIdempotent,
 			outputSchema: outputSchemas.follow_playlist,
 		},
-		guard(async ({ playlist_id }) => {
-			await followPlaylist(sp(), playlist_id);
+		guard(async ({ playlist_id }, spotify) => {
+			await followPlaylist(spotify, playlist_id);
 			return okText("Playlist followed.");
 		}),
 	);
@@ -757,8 +797,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: destructive,
 			outputSchema: outputSchemas.unfollow_playlist,
 		},
-		guard(async ({ playlist_id }) => {
-			await unfollowPlaylist(sp(), playlist_id);
+		guard(async ({ playlist_id }, spotify) => {
+			await unfollowPlaylist(spotify, playlist_id);
 			return okText("Playlist unfollowed/deleted.");
 		}),
 	);
@@ -775,8 +815,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: readOnly,
 			outputSchema: outputSchemas.get_saved_tracks,
 		},
-		guard(async ({ limit, offset }) => {
-			const page = await getSavedTracks(sp(), { limit, offset });
+		guard(async ({ limit, offset }, spotify) => {
+			const page = await getSavedTracks(spotify, { limit, offset });
 			return ok({
 				total: page.total,
 				offset,
@@ -803,8 +843,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: additiveIdempotent,
 			outputSchema: outputSchemas.save_tracks,
 		},
-		guard(async ({ ids }) => {
-			await writeLibrary(sp(), "PUT", "track", ids);
+		guard(async ({ ids }, spotify) => {
+			await writeLibrary(spotify, "PUT", "track", ids);
 			return okText(`Saved ${ids.length} track(s).`);
 		}),
 	);
@@ -824,8 +864,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: destructive,
 			outputSchema: outputSchemas.remove_saved_tracks,
 		},
-		guard(async ({ ids }) => {
-			await writeLibrary(sp(), "DELETE", "track", ids);
+		guard(async ({ ids }, spotify) => {
+			await writeLibrary(spotify, "DELETE", "track", ids);
 			return okText(`Removed ${ids.length} track(s).`);
 		}),
 	);
@@ -842,8 +882,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: readOnly,
 			outputSchema: outputSchemas.get_saved_albums,
 		},
-		guard(async ({ limit, offset }) => {
-			const page = await getSavedAlbums(sp(), { limit, offset });
+		guard(async ({ limit, offset }, spotify) => {
+			const page = await getSavedAlbums(spotify, { limit, offset });
 			return ok({
 				total: page.total,
 				offset,
@@ -870,8 +910,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: additiveIdempotent,
 			outputSchema: outputSchemas.save_albums,
 		},
-		guard(async ({ ids }) => {
-			await writeLibrary(sp(), "PUT", "album", ids);
+		guard(async ({ ids }, spotify) => {
+			await writeLibrary(spotify, "PUT", "album", ids);
 			return okText(`Saved ${ids.length} album(s).`);
 		}),
 	);
@@ -891,8 +931,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: destructive,
 			outputSchema: outputSchemas.remove_saved_albums,
 		},
-		guard(async ({ ids }) => {
-			await writeLibrary(sp(), "DELETE", "album", ids);
+		guard(async ({ ids }, spotify) => {
+			await writeLibrary(spotify, "DELETE", "album", ids);
 			return okText(`Removed ${ids.length} album(s).`);
 		}),
 	);
@@ -906,8 +946,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: readOnly,
 			outputSchema: outputSchemas.get_followed_artists,
 		},
-		guard(async ({ limit }) => {
-			const page = await getFollowedArtists(sp(), { limit });
+		guard(async ({ limit }, spotify) => {
+			const page = await getFollowedArtists(spotify, { limit });
 			return ok({ total: page.total, artists: page.items.map(compactArtist) });
 		}),
 	);
@@ -927,8 +967,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: additiveIdempotent,
 			outputSchema: outputSchemas.follow_artists,
 		},
-		guard(async ({ ids }) => {
-			await writeLibrary(sp(), "PUT", "artist", ids);
+		guard(async ({ ids }, spotify) => {
+			await writeLibrary(spotify, "PUT", "artist", ids);
 			return okText(`Followed ${ids.length} artist(s).`);
 		}),
 	);
@@ -948,8 +988,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: destructive,
 			outputSchema: outputSchemas.unfollow_artists,
 		},
-		guard(async ({ ids }) => {
-			await writeLibrary(sp(), "DELETE", "artist", ids);
+		guard(async ({ ids }, spotify) => {
+			await writeLibrary(spotify, "DELETE", "artist", ids);
 			return okText(`Unfollowed ${ids.length} artist(s).`);
 		}),
 	);
@@ -971,11 +1011,11 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: readOnly,
 			outputSchema: outputSchemas.check_library,
 		},
-		guard(async ({ kind, ids }) => {
+		guard(async ({ kind, ids }, spotify) => {
 			if (ids.length > CONTAINS_MAX[kind]) {
 				return toolError(`check_library takes at most ${CONTAINS_MAX[kind]} ${kind} IDs per call.`);
 			}
-			const flags = await libraryContains(sp(), kind, ids);
+			const flags = await libraryContains(spotify, kind, ids);
 			// Pair by position, so a short answer must fail rather than mislabel.
 			if (flags.length !== ids.length) {
 				return toolError(`Spotify answered for ${flags.length} of ${ids.length} IDs; try again.`);
@@ -999,8 +1039,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: readOnly,
 			outputSchema: outputSchemas.get_saved_shows,
 		},
-		guard(async ({ limit, offset }) => {
-			const page = await getSavedShows(sp(), { limit, offset });
+		guard(async ({ limit, offset }, spotify) => {
+			const page = await getSavedShows(spotify, { limit, offset });
 			return ok({
 				total: page.total,
 				offset,
@@ -1027,8 +1067,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: additiveIdempotent,
 			outputSchema: outputSchemas.save_shows,
 		},
-		guard(async ({ ids }) => {
-			await writeLibrary(sp(), "PUT", "show", ids);
+		guard(async ({ ids }, spotify) => {
+			await writeLibrary(spotify, "PUT", "show", ids);
 			return okText(`Saved ${ids.length} show(s).`);
 		}),
 	);
@@ -1048,8 +1088,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: destructive,
 			outputSchema: outputSchemas.remove_saved_shows,
 		},
-		guard(async ({ ids }) => {
-			await writeLibrary(sp(), "DELETE", "show", ids);
+		guard(async ({ ids }, spotify) => {
+			await writeLibrary(spotify, "DELETE", "show", ids);
 			return okText(`Removed ${ids.length} show(s).`);
 		}),
 	);
@@ -1068,8 +1108,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: lookup,
 			outputSchema: outputSchemas.get_show_episodes,
 		},
-		guard(async ({ show_id, limit, offset }) => {
-			const page = await getShowEpisodes(sp(), show_id, { limit, offset });
+		guard(async ({ show_id, limit, offset }, spotify) => {
+			const page = await getShowEpisodes(spotify, show_id, { limit, offset });
 			return ok({ total: page.total, offset, episodes: page.items.map(compactEpisode) });
 		}),
 	);
@@ -1086,8 +1126,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: readOnly,
 			outputSchema: outputSchemas.get_saved_episodes,
 		},
-		guard(async ({ limit, offset }) => {
-			const page = await getSavedEpisodes(sp(), { limit, offset });
+		guard(async ({ limit, offset }, spotify) => {
+			const page = await getSavedEpisodes(spotify, { limit, offset });
 			return ok({
 				total: page.total,
 				offset,
@@ -1114,8 +1154,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: additiveIdempotent,
 			outputSchema: outputSchemas.save_episodes,
 		},
-		guard(async ({ ids }) => {
-			await writeLibrary(sp(), "PUT", "episode", ids);
+		guard(async ({ ids }, spotify) => {
+			await writeLibrary(spotify, "PUT", "episode", ids);
 			return okText(`Saved ${ids.length} episode(s).`);
 		}),
 	);
@@ -1135,8 +1175,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: destructive,
 			outputSchema: outputSchemas.remove_saved_episodes,
 		},
-		guard(async ({ ids }) => {
-			await writeLibrary(sp(), "DELETE", "episode", ids);
+		guard(async ({ ids }, spotify) => {
+			await writeLibrary(spotify, "DELETE", "episode", ids);
 			return okText(`Removed ${ids.length} episode(s).`);
 		}),
 	);
@@ -1153,8 +1193,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: readOnly,
 			outputSchema: outputSchemas.get_saved_audiobooks,
 		},
-		guard(async ({ limit, offset }) => {
-			const page = await getSavedAudiobooks(sp(), { limit, offset });
+		guard(async ({ limit, offset }, spotify) => {
+			const page = await getSavedAudiobooks(spotify, { limit, offset });
 			return ok({
 				total: page.total,
 				offset,
@@ -1181,8 +1221,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: additiveIdempotent,
 			outputSchema: outputSchemas.save_audiobooks,
 		},
-		guard(async ({ ids }) => {
-			await writeLibrary(sp(), "PUT", "audiobook", ids);
+		guard(async ({ ids }, spotify) => {
+			await writeLibrary(spotify, "PUT", "audiobook", ids);
 			return okText(`Saved ${ids.length} audiobook(s).`);
 		}),
 	);
@@ -1202,8 +1242,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: destructive,
 			outputSchema: outputSchemas.remove_saved_audiobooks,
 		},
-		guard(async ({ ids }) => {
-			await writeLibrary(sp(), "DELETE", "audiobook", ids);
+		guard(async ({ ids }, spotify) => {
+			await writeLibrary(spotify, "DELETE", "audiobook", ids);
 			return okText(`Removed ${ids.length} audiobook(s).`);
 		}),
 	);
@@ -1218,8 +1258,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: readOnly,
 			outputSchema: outputSchemas.get_playback_state,
 		},
-		guard(async () => {
-			const state = await getPlaybackState(sp());
+		guard(async (_args, spotify) => {
+			const state = await getPlaybackState(spotify);
 			if (!state) {
 				return ok(
 					{ is_playing: false, track: null, message: "No active playback." },
@@ -1309,49 +1349,54 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: additive,
 			outputSchema: outputSchemas.control_playback,
 		},
-		guard(async ({ action, context_uri, uris, position_ms, volume_percent, state, device_id }) => {
-			switch (action) {
-				case "play":
-					await controlPlayback(
-						sp(),
-						{
-							action,
-							...(uris ? { uris } : {}),
-							...(context_uri ? { contextUri: context_uri } : {}),
-						},
-						device_id,
-					);
-					break;
-				case "pause":
-				case "next":
-				case "previous":
-					await controlPlayback(sp(), { action }, device_id);
-					break;
-				case "seek":
-					if (position_ms === undefined) return toolError("action=seek requires position_ms.");
-					await controlPlayback(sp(), { action, positionMs: position_ms }, device_id);
-					break;
-				case "volume":
-					if (volume_percent === undefined) {
-						return toolError("action=volume requires volume_percent.");
-					}
-					await controlPlayback(sp(), { action, volumePercent: volume_percent }, device_id);
-					break;
-				case "shuffle":
-					if (state !== "on" && state !== "off") {
-						return toolError("action=shuffle requires state=on or state=off.");
-					}
-					await controlPlayback(sp(), { action, state: state === "on" }, device_id);
-					break;
-				case "repeat":
-					if (state !== "track" && state !== "context" && state !== "off") {
-						return toolError("action=repeat requires state=track, context or off.");
-					}
-					await controlPlayback(sp(), { action, state }, device_id);
-					break;
-			}
-			return okText(`Playback action '${action}' done.`);
-		}),
+		guard(
+			async (
+				{ action, context_uri, uris, position_ms, volume_percent, state, device_id },
+				spotify,
+			) => {
+				switch (action) {
+					case "play":
+						await controlPlayback(
+							spotify,
+							{
+								action,
+								...(uris ? { uris } : {}),
+								...(context_uri ? { contextUri: context_uri } : {}),
+							},
+							device_id,
+						);
+						break;
+					case "pause":
+					case "next":
+					case "previous":
+						await controlPlayback(spotify, { action }, device_id);
+						break;
+					case "seek":
+						if (position_ms === undefined) return toolError("action=seek requires position_ms.");
+						await controlPlayback(spotify, { action, positionMs: position_ms }, device_id);
+						break;
+					case "volume":
+						if (volume_percent === undefined) {
+							return toolError("action=volume requires volume_percent.");
+						}
+						await controlPlayback(spotify, { action, volumePercent: volume_percent }, device_id);
+						break;
+					case "shuffle":
+						if (state !== "on" && state !== "off") {
+							return toolError("action=shuffle requires state=on or state=off.");
+						}
+						await controlPlayback(spotify, { action, state: state === "on" }, device_id);
+						break;
+					case "repeat":
+						if (state !== "track" && state !== "context" && state !== "off") {
+							return toolError("action=repeat requires state=track, context or off.");
+						}
+						await controlPlayback(spotify, { action, state }, device_id);
+						break;
+				}
+				return okText(`Playback action '${action}' done.`);
+			},
+		),
 	);
 
 	server.registerTool(
@@ -1363,8 +1408,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: readOnly,
 			outputSchema: outputSchemas.get_queue,
 		},
-		guard(async () => {
-			const q = await getQueue(sp());
+		guard(async (_args, spotify) => {
+			const q = await getQueue(spotify);
 			return ok({
 				currently_playing: q.currently_playing ? compactTrack(q.currently_playing) : null,
 				queue: (q.queue ?? []).slice(0, 20).map(compactTrack),
@@ -1384,8 +1429,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: additive,
 			outputSchema: outputSchemas.add_to_queue,
 		},
-		guard(async ({ uri, device_id }) => {
-			await addToQueue(sp(), uri, device_id);
+		guard(async ({ uri, device_id }, spotify) => {
+			await addToQueue(spotify, uri, device_id);
 			return okText("Added to queue.");
 		}),
 	);
@@ -1399,8 +1444,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: readOnly,
 			outputSchema: outputSchemas.list_devices,
 		},
-		guard(async () => {
-			const devices = await getDevices(sp());
+		guard(async (_args, spotify) => {
+			const devices = await getDevices(spotify);
 			return ok({
 				devices: devices.map((d) => ({
 					...(d.id ? { id: d.id } : {}),
@@ -1425,8 +1470,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: additiveIdempotent,
 			outputSchema: outputSchemas.transfer_playback,
 		},
-		guard(async ({ device_id, play }) => {
-			await transferPlayback(sp(), device_id, play);
+		guard(async ({ device_id, play }, spotify) => {
+			await transferPlayback(spotify, device_id, play);
 			return okText("Playback transferred.");
 		}),
 	);
@@ -1440,8 +1485,8 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: readOnly,
 			outputSchema: outputSchemas.get_recently_played,
 		},
-		guard(async ({ limit }) => {
-			const res = await getRecentlyPlayed(sp(), { limit });
+		guard(async ({ limit }, spotify) => {
+			const res = await getRecentlyPlayed(spotify, { limit });
 			return ok({
 				tracks: res.items.map((entry) => ({
 					...compactTrack(entry.track),
@@ -1469,12 +1514,12 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			annotations: readOnly,
 			outputSchema: outputSchemas.get_top_items,
 		},
-		guard(async ({ type, time_range, limit }) => {
+		guard(async ({ type, time_range, limit }, spotify) => {
 			if (type === "artists") {
-				const page = await getTopArtists(sp(), { timeRange: time_range, limit });
+				const page = await getTopArtists(spotify, { timeRange: time_range, limit });
 				return ok({ artists: page.items.map(compactArtist) });
 			}
-			const page = await getTopTracks(sp(), { timeRange: time_range, limit });
+			const page = await getTopTracks(spotify, { timeRange: time_range, limit });
 			return ok({ tracks: page.items.map(compactTrack) });
 		}),
 	);
