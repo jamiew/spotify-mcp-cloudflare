@@ -37,7 +37,7 @@ Auth is standard MCP OAuth &mdash; connecting opens Spotify's consent screen, no
 <p>Settings &rarr; Connectors &rarr; Add custom connector &rarr; <code>${mcpUrl}</code></p>
 
 <h2>Endpoints</h2>
-<p><code>/mcp</code> Streamable HTTP &middot; <code>/sse</code> legacy SSE &middot;
+<p><code>/mcp</code> Streamable HTTP, stateless (MCP 2026-07-28 and older clients) &middot;
 <code>/.well-known/oauth-authorization-server</code> discovery</p>
 
 <h2>Heads up</h2>

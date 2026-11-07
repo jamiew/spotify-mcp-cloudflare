@@ -4,13 +4,6 @@ allowBuilds:
   sharp: true
   workerd: true
 
-# GHSA-frvp-7c67-39w9: @hono/node-server path traversal (Windows, serve-static).
-# Transitive via @modelcontextprotocol/sdk's Node adapter — never executed on
-# Workers. SDK pins <2; drop this ignore when it moves to node-server >=2.0.5.
-auditConfig:
-  ignoreGhsas:
-    - GHSA-frvp-7c67-39w9
-
 # GHSA-2v37-7h3g-55p8: nanoid custom generators loop on size 0. Reached only
 # through vite -> postcss (a build-time path), and `pnpm update` won't move the
 # transitive past postcss's resolved pin. Stay on 3.x: postcss requires it as CJS.
@@ -20,3 +13,6 @@ overrides:
   "postcss@<8.5.23": "^8.5.23"
   "markdown-it@<15.0.3": "^15.0.3"
   "smol-toml@<1.9.0": "^1.9.0"
+  # GHSA-gg6h-894w-4m9c, GHSA-238p-pmpm-9mq7: dev-only via markdownlint-cli2.
+  "re2js@<2.8.7": "^2.8.7"
+  "katex@<0.18.2": "^0.18.2"

@@ -1,5 +1,4 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker-provider.js";
+import { McpServer } from "@modelcontextprotocol/server";
 import { version } from "../package.json";
 import type { SpotifyClient } from "./spotify";
 import { INSTRUCTIONS, registerTools } from "./tools";
@@ -7,7 +6,11 @@ import { INSTRUCTIONS, registerTools } from "./tools";
 // These public icons also work for local clients. Forks can replace the origin.
 const ORIGIN = "https://spotify-mcp-cloudflare.jamie-7e9.workers.dev";
 
-/** No token or transport state belongs in the shared MCP surface. */
+/**
+ * Builds one MCP server. Stateless HTTP builds one per request and stdio one
+ * per connection, so no token or transport state belongs here. The SDK picks a
+ * JSON Schema validator per runtime; workerd's never generates code.
+ */
 export function createSpotifyServer(getSpotify?: () => SpotifyClient): McpServer {
 	const server = new McpServer(
 		{
@@ -22,13 +25,9 @@ export function createSpotifyServer(getSpotify?: () => SpotifyClient): McpServer
 				{ src: `${ORIGIN}/icon.svg`, mimeType: "image/svg+xml", sizes: ["any"] },
 			],
 		},
-		{
-			instructions: INSTRUCTIONS,
-			// Form responses must validate without eval/new Function in Workers.
-			jsonSchemaValidator: new CfWorkerJsonSchemaValidator(),
-		},
+		{ instructions: INSTRUCTIONS },
 	);
-	// A denied Worker session deliberately exposes no tools or prompts.
+	// A denied Worker request deliberately exposes no tools or prompts.
 	if (getSpotify) registerTools(server, getSpotify);
 	return server;
 }

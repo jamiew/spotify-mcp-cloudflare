@@ -50,22 +50,24 @@ export function isAccountAllowed(
 }
 
 /**
- * Context from the auth process, encrypted and stored in the issued OAuth
- * token, then provided to the McpAgent as `this.props`.
+ * Context from the auth process, encrypted into the OAuth grant. The grant is
+ * the single owner of the Spotify tokens: the provider's token exchange
+ * callback refreshes them and stores the result back on the grant.
  */
-export type Props = {
-	userId: string;
+export const propsSchema = z.object({
+	userId: z.string(),
 	/** Spotify's immutable account identifier; absent on grants issued before it was stored. */
-	accountId?: string;
-	displayName: string;
-	email: string;
-	accessToken: string;
-	refreshToken: string;
+	accountId: z.string().optional(),
+	displayName: z.string(),
+	email: z.string(),
+	accessToken: z.string(),
+	refreshToken: z.string(),
 	/** Epoch milliseconds at which `accessToken` expires. */
-	expiresAt: number;
-	/** Scopes this grant was actually minted with, per Spotify's token response. */
-	scope: string;
-};
+	expiresAt: z.number(),
+	/** Scopes Spotify granted; grants issued before 2026-07-30 never stored them. */
+	scope: z.string().default(""),
+});
+export type Props = z.infer<typeof propsSchema>;
 
 /** Spotify's token endpoint JSON response. */
 const tokenResponseSchema = z.object({

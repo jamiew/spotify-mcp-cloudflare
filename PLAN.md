@@ -19,10 +19,11 @@ reads. Python still has resources, two additional prompts and best-effort
 playback confirmation.
 Public names and result shapes differ; this is not a drop-in client migration.
 
-The Worker remains on McpAgent and MCP SDK v1 for this pass. Changing the token
-owner, transport and SDK at the same time as adding local mode would make failures
-harder to isolate. Local mode must not import Cloudflare-only modules or share
-one person's tokens with other users.
+The Worker is stateless on MCP SDK v2 (`createMcpHandler`) and serves both the
+2026-07-28 revision and 2025-era clients. The OAuth grant is the single owner of
+each user's Spotify tokens: `tokenExchangeCallback` renews Spotify on MCP refresh
+and writes the result back. Local mode must not import Cloudflare-only modules or
+share one person's tokens with other users.
 
 ## Completed API corrections
 
@@ -54,11 +55,13 @@ user's cache automatically to force it.
 A branch push opens CI but does not deploy: deployment is gated on `main` and
 `DEPLOY_ENABLED`. Do not publish, merge or deploy as part of a code-only update.
 
-Release checks pass 89 workerd tests and seven Node auth tests, with a 688.58 KiB
-gzip bundle. Tests use the shared server factory and reject dynamic code generation
-during playlist-removal confirmation, matching the Worker runtime restriction.
-The actual stdio process passes discovery, ping, competing-owner rejection, signout
-and missing-login checks with isolated synthetic tokens.
+On the SDK v2 branch, `pnpm check` passes 175 workerd tests (tool surface on three
+protocol lanes, plus real grants, refresh, rotation, revocation and stale-token
+401s) and seven Node auth tests, with a 307.6 KiB gzip bundle. The actual stdio
+process serves 44 tools and three prompts on both eras with synthetic tokens, and
+asks for and honors a declined removal on each. `wrangler dev` serves the `/mcp`
+resource metadata and 404s `/sse`. Not yet run: `pnpm e2e` against a deployment
+of this branch, which needs Spotify consent in a browser.
 
 Fresh native PKCE consent, real upstream refresh, private token persistence and
 all 17 read tools pass through the actual stdio entrypoint. All 14 non-playback
@@ -72,15 +75,15 @@ Playback and queue writes remain intentionally untested without explicit permiss
 
 ## Remaining decisions
 
-- Migrate McpAgent/SDK v1 to the supported stateless handler/SDK v2 only after
-  defining a single authoritative upstream-token owner per grant and a tested
-  existing-grant migration. Account for simultaneous sessions and refresh rotation.
-- Configure canonical resource/audience binding and evaluate CIMD with safe
-  metadata fetching. Preserve deliberate legacy-client compatibility rather than
-  equating DCR support with current-protocol conformance. This is the
-  `workers-oauth-provider` 1.x upgrade: it binds each token to one resource, and
-  live grants can carry `/mcp`, `/sse` or the bare origin. Choose between dropping
-  `/sse`, declaring each resource, or one forced sign-in before upgrading.
+- Before deploying SDK v2, count live grant resources (command in the
+  `workers-oauth-provider` migration guide). Grants bound to `/sse` or the bare
+  origin sign in once; `/mcp` grants keep working. Then run `pnpm e2e` and check
+  a refresh on an existing session.
+- Evaluate CIMD: it needs the `global_fetch_strictly_public` compatibility flag
+  and `clientIdMetadataDocumentEnabled`. Keep DCR for current clients.
+- 2025-era remote clients can't be asked to confirm removal over stateless HTTP.
+  A sessionful legacy lane would fix that at the cost of the Durable Object; only
+  worth it if users rely on it before their clients move to 2026-07-28.
 - Provide remote disconnect/data deletion and explicit grant/session revocation.
   An allowlist edit is not complete data cleanup.
 - Add per-user/IP auth and tool abuse controls plus an app/developer quota budget

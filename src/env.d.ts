@@ -1,11 +1,13 @@
 // Bindings available to the Worker. Runtime types live in the generated
-// worker-configuration.d.ts (`pnpm cf-typegen`); this file owns the Env shape.
+// worker-configuration.d.ts (`pnpm type-check`); this file owns the Env shape.
 declare namespace Cloudflare {
+	interface GlobalProps {
+		/** Types `exports` from `cloudflare:workers`, which tests use to call the Worker. */
+		mainModule: typeof import("./index");
+	}
 	interface Env {
 		/** KV namespace backing the OAuth provider (grants, tokens, clients, state). */
 		OAUTH_KV: KVNamespace;
-		/** Durable Object namespace for the SpotifyMCP agent. */
-		MCP_OBJECT: DurableObjectNamespace;
 		/** Spotify app Client ID (set via `wrangler secret put`). */
 		SPOTIFY_CLIENT_ID: string;
 		/** Spotify app Client Secret (set via `wrangler secret put`). */

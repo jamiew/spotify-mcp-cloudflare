@@ -8,6 +8,15 @@ export default defineConfig({
 	plugins: [
 		cloudflareTest({
 			wrangler: { configPath: "./wrangler.jsonc" },
+			// Stand-ins for the deployed secrets; Spotify itself is faked per test.
+			miniflare: {
+				bindings: {
+					SPOTIFY_CLIENT_ID: "test-client-id",
+					SPOTIFY_CLIENT_SECRET: "test-client-secret",
+					COOKIE_ENCRYPTION_KEY: "test-cookie-key",
+					ALLOWED_EMAILS: "allowed@example.com",
+				},
+			},
 		}),
 	],
 });

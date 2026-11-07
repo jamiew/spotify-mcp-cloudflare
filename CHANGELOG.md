@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **MCP SDK v2, stateless Worker.** `McpAgent`, MCP SDK v1 and the Durable Object are gone. `/mcp` now runs `createMcpHandler` from `agents` 0.33 on `@modelcontextprotocol/server` 2.4. It speaks the 2026-07-28 revision and still serves 2025-era clients, each request on a fresh server. Local stdio moves to `serveStdio` and negotiates either era too. The gzipped Worker drops from 712 KiB to 308 KiB.
+- **The OAuth grant owns the Spotify tokens.** Before, each MCP session's Durable Object refreshed its own copy. Now the provider's token exchange callback renews Spotify when a client refreshes and writes the result back to the grant, so every session of a grant shares one refresh chain, including a rotated Spotify refresh token. MCP access tokens expire five minutes before the Spotify token they carry. A request whose Spotify token has already lapsed (grants from before this release) gets a 401 that makes the client refresh. Spotify `invalid_grant` revokes the grant; a Spotify outage returns `temporarily_unavailable` and keeps it. A removed allowlist account is revoked at its next refresh.
+- **Sign in again if you used `/sse`.** `workers-oauth-provider` 1.2 binds every token to one resource, now `<origin>/mcp`. The deprecated HTTP+SSE endpoint is removed; grants made through it get `invalid_grant` and sign in once. Grants made through `/mcp` keep working. The `v2` Wrangler migration deletes the old `SpotifyMCP` Durable Object class and its per-session token copies on deploy.
+- **Removal confirmation uses `input_required`.** `remove_tracks_from_playlist` returns an elicitation request instead of pushing one, so it works over stateless HTTP for 2026-07-28 clients and over stdio for both eras. A bare `elicitation: {}` capability now counts as form support, as the spec says. 2025-era clients on the remote Worker can't be asked and remove directly, as clients without elicitation always have.
+- Endpoint regime answers are now shared across requests in a Worker isolate instead of per session, since the regime belongs to the app.
+- Tests drive the real tool surface on three lanes (2026-07-28 over HTTP, 2025 over stateless HTTP, 2025 with a session) and the Worker end to end in workerd with real grants, refreshes and revocations. `pnpm e2e` checks both lanes live.
+- Dependencies at their latest: `workers-oauth-provider` 1.2.4, `agents` 0.33, `hono` 4.13.16, `wrangler` 4.158, `vitest` 5.1, `@cloudflare/vitest-plugin` 1.6, `markdownlint-cli2` 0.24. Compatibility date 2026-10-23 and an ES2024 TypeScript target. `pnpm audit` is clean; pnpm overrides patch `re2js` and `katex` (dev-only, via `markdownlint-cli2`) and the `@hono/node-server` audit exception is gone. Supersedes #22.
+
 ## 2026-11-01 — 0.8.0
 
 - Playback controls and `add_to_queue` no longer report "unexpected shape" after Spotify did the action. Spotify now answers player writes with HTTP 200 and an opaque plain-text body, and the client tried to parse it as JSON. Writes no longer read the response body; reads still validate theirs.

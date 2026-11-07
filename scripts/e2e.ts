@@ -1,6 +1,7 @@
-// Live e2e smoke test: connects to the deployed MCP server as a real OAuth
-// client (dynamic registration + PKCE; opens your browser once, then caches
-// tokens in .e2e-auth.json) and exercises read-only tools.
+// Live e2e smoke test: connects to the MCP server as a real OAuth client
+// (dynamic registration + PKCE; opens your browser once, then caches tokens in
+// .e2e-auth.json) and exercises read-only tools on both protocol lanes: a
+// 2026-07-28 client and a 2025-era client, which is what most hosts still are.
 //
 //   pnpm e2e                       # against the deployed worker
 //   E2E_SERVER=http://127.0.0.1:8788 pnpm e2e   # against wrangler dev
@@ -8,10 +9,12 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
-import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { OAuthClientProvider } from "@modelcontextprotocol/client";
+import {
+	Client,
+	StreamableHTTPClientTransport,
+	UnauthorizedError,
+} from "@modelcontextprotocol/client";
 
 const SERVER = process.env.E2E_SERVER ?? "https://spotify-mcp-cloudflare.jamie-7e9.workers.dev";
 const CALLBACK_PORT = 8976;
@@ -84,12 +87,16 @@ const provider: OAuthClientProvider = {
 	},
 	codeVerifier: () => cache.codeVerifier,
 	invalidateCredentials(scope) {
-		if (scope === "all") {
-			delete cache.clientInformation;
-			delete cache.tokens;
-		}
+		if (scope === "all" || scope === "client") delete cache.clientInformation;
 		if (scope === "all" || scope === "tokens") delete cache.tokens;
 		if (scope === "all" || scope === "verifier") delete cache.codeVerifier;
+		if (scope === "all" || scope === "discovery") delete cache.discoveryState;
+		saveCache(cache);
+	},
+	// Survives the browser redirect, so finishing auth skips rediscovery.
+	discoveryState: () => cache.discoveryState,
+	saveDiscoveryState(state) {
+		cache.discoveryState = state;
 		saveCache(cache);
 	},
 };
@@ -120,8 +127,16 @@ function makeTransport() {
 	});
 }
 
-async function connect(): Promise<Client> {
-	const client = new Client({ name: "e2e-smoke", version: "0.0.1" });
+type Lane = "modern" | "legacy";
+
+const newClient = (lane: Lane) =>
+	new Client(
+		{ name: "e2e-smoke", version: "0.0.1" },
+		lane === "modern" ? { versionNegotiation: { mode: "auto" } } : {},
+	);
+
+async function connect(lane: Lane): Promise<Client> {
+	const client = newClient(lane);
 	const transport = makeTransport();
 	try {
 		await client.connect(transport);
@@ -130,7 +145,7 @@ async function connect(): Promise<Client> {
 		if (!(e instanceof UnauthorizedError)) throw e;
 		const code = await waitForCallbackCode();
 		await transport.finishAuth(code);
-		const retryClient = new Client({ name: "e2e-smoke", version: "0.0.1" });
+		const retryClient = newClient(lane);
 		await retryClient.connect(makeTransport());
 		return retryClient;
 	}
@@ -166,10 +181,25 @@ async function main() {
 		"unauthenticated /mcp is 401 + WWW-Authenticate",
 		bare.status === 401 && (bare.headers.get("www-authenticate") ?? "").includes("Bearer"),
 	);
+	const resource = await fetch(new URL("/.well-known/oauth-protected-resource/mcp", SERVER));
+	const resourceId = (await resource.json().catch(() => ({})))?.resource;
+	check("protected resource is /mcp", resourceId === new URL("/mcp", SERVER).href, resourceId);
+	check("legacy /sse transport is gone", (await fetch(new URL("/sse", SERVER))).status === 404);
 
-	// Authenticated MCP session
-	const client = await connect();
-	console.log("  connected (OAuth ok)");
+	for (const lane of ["modern", "legacy"] as const) {
+		console.log(`\n${lane} lane`);
+		await exercise(await connect(lane), lane);
+	}
+	console.log(failures === 0 ? "\nall checks passed" : `\n${failures} check(s) FAILED`);
+	process.exit(failures === 0 ? 0 : 1);
+}
+
+async function exercise(client: Client, lane: Lane) {
+	console.log(`  connected (OAuth ok, protocol ${client.getNegotiatedProtocolVersion()})`);
+	check(
+		"negotiated the expected protocol era",
+		(client.getNegotiatedProtocolVersion() === "2026-07-28") === (lane === "modern"),
+	);
 
 	const tools = await client.listTools();
 	const names = tools.tools.map((t) => t.name);
@@ -221,8 +251,6 @@ async function main() {
 	});
 
 	await client.close();
-	console.log(failures === 0 ? "\nall checks passed" : `\n${failures} check(s) FAILED`);
-	process.exit(failures === 0 ? 0 : 1);
 }
 
 main().catch((e) => {

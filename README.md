@@ -16,7 +16,7 @@ with a different set of tools, resources and prompts.
   each user. Use an invited instance or [deploy your own](#self-host-a-worker).
 
 The invited instance is **`https://spotify-mcp-cloudflare.jamie-7e9.workers.dev/mcp`**
-(Streamable HTTP; legacy SSE at `/sse`). It is not public enrollment: you need an
+(stateless Streamable HTTP; serves MCP 2026-07-28 and 2025-era clients). It is not public enrollment: you need an
 invitation and access through both the Worker and Spotify dashboard allowlists.
 Its deployed revision can lag this branch. The checked-in `.mcp.json` uses this
 restricted instance; replace its URL for your own deployment.
@@ -80,8 +80,8 @@ pnpm wrangler kv namespace create OAUTH_KV
 ```
 
 In `wrangler.jsonc`, replace the checked-in `OAUTH_KV` namespace ID with yours.
-Keep the `MCP_OBJECT` Durable Object binding to `SpotifyMCP` and its migration.
-The OAuth provider uses KV for clients, grants and tokens.
+The Worker keeps no Durable Objects. The OAuth provider uses KV for clients,
+grants and tokens, and each grant holds its user's Spotify tokens.
 
 Add your Worker's exact HTTPS redirect URI to the Spotify app:
 
@@ -102,8 +102,9 @@ pnpm run deploy
 
 Set `ALLOWED_EMAILS` to a **nonempty**, comma-separated list of Spotify user/account
 IDs or emails. Prefer stable IDs because some apps cannot read email. Empty or
-unset allows any upstream-authorized account through this gate. Existing sessions
-are checked before tool use. This is separate from Spotify's dashboard allowlist;
+unset allows any upstream-authorized account through this gate. Every request is
+checked before tool use, and a removed account's grant is revoked at its next
+token refresh. This is separate from Spotify's dashboard allowlist;
 knowing the server URL is not access control.
 
 ### Connect remotely
@@ -178,8 +179,10 @@ or grant permission to send Spotify content to a model:
 - `set_playlist_cover` accepts an HTTPS JPEG URL and enforces Spotify's 256 KB
   encoded-payload cap, about 192 KB of JPEG.
 - Tool annotations are client hints, not authorization or human approval.
-  Playlist removal requests confirmation through elicitation when supported;
-  decline, cancel or failure blocks removal. Otherwise use your client's own
+  Playlist removal asks for confirmation when the client supports form
+  elicitation; decline, cancel or failure blocks removal. Older (2025-era)
+  clients on the remote Worker can't be asked, because stateless HTTP has no
+  session to ask over, so removal goes ahead there. Use your client's own
   write-confirmation controls.
 
 ## Spotify access and policy
@@ -212,9 +215,8 @@ and related artists are not exposed.
 **This code alone does not authorize unrestricted public AI hosting.** Before
 inviting others, explain scopes, provide privacy and deletion procedures, and
 verify account isolation, refresh, reconnect and removal on the deployed revision.
-Deleting a connector or changing an allowlist does not fully revoke upstream
-access or clear Durable Object data. Encrypted OAuth grant properties do not
-imply equivalent application-level encryption for Durable Object tokens.
+Deleting a connector or changing an allowlist does not revoke Spotify's own app
+grant; the user does that at spotify.com/account/apps.
 See [PLAN.md](PLAN.md) for the remaining hosting/security work.
 
 ## Development

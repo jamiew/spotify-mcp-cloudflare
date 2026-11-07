@@ -1,9 +1,15 @@
-// The MCP tool and prompt surface. Kept apart from the Durable Object in
-// index.ts so it can be driven in-process by tests with a fake Spotify.
+// The MCP tool and prompt surface, shared by the stateless Worker and local
+// stdio, and driven in-process by tests with a fake Spotify.
 
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
-import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sdk/types.js";
+import {
+	acceptedContent,
+	CLIENT_CAPABILITIES_META_KEY,
+	type InputRequiredResult,
+	inputRequired,
+	inputResponse,
+	type McpServer,
+	type ServerContext,
+} from "@modelcontextprotocol/server";
 import { z } from "zod";
 import {
 	addPlaylistTracks,
@@ -189,20 +195,43 @@ async function fetchCoverAsBase64(url: string): Promise<string> {
 	return base64;
 }
 
-type ToolContext = RequestHandlerExtra<ServerRequest, ServerNotification>;
-
 /** Wraps a tool handler so thrown errors become friendly MCP error results. */
-function guard<A>(
-	fn: (args: A, extra: ToolContext) => Promise<ToolResult>,
-): (args: A, extra: ToolContext) => Promise<ToolResult> {
-	return async (args, extra) => {
+function guard<A, R extends ToolResult | InputRequiredResult = ToolResult>(
+	fn: (args: A, ctx: ServerContext) => Promise<R>,
+): (args: A, ctx: ServerContext) => Promise<R | ToolResult> {
+	return async (args, ctx) => {
 		try {
-			return await fn(args, extra);
+			return await fn(args, ctx);
 		} catch (e) {
 			return mapError(e);
 		}
 	};
 }
+
+const elicitationCapability = z
+	.object({ elicitation: z.object({ form: z.unknown(), url: z.unknown() }).partial().optional() })
+	.optional();
+const capabilityEnvelope = z.object({ [CLIENT_CAPABILITIES_META_KEY]: elicitationCapability });
+
+/**
+ * Modern requests carry the client's capabilities in their envelope; legacy
+ * connections declared them at initialize. A bare `elicitation: {}` predates
+ * modes and means form. Stateless legacy HTTP has neither, so it reads false.
+ */
+function supportsFormElicitation(server: McpServer, ctx: ServerContext): boolean {
+	const envelope = capabilityEnvelope.safeParse(ctx.mcpReq.envelope);
+	const capabilities = envelope.success
+		? envelope.data[CLIENT_CAPABILITIES_META_KEY]
+		: elicitationCapability.safeParse(server.server.getClientCapabilities()).data;
+	const elicitation = capabilities?.elicitation;
+	return (
+		elicitation !== undefined && (elicitation.form !== undefined || elicitation.url === undefined)
+	);
+}
+
+const removalConfirmation = z.object({
+	confirm: z.boolean().default(false).meta({ title: "Confirm removal" }),
+});
 
 // Advisory MCP hints; clients decide how to use them. They do not enforce
 // confirmation. Destructive means overwrites or deletes existing data.
@@ -225,7 +254,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			title: "Spotify profile",
 			description:
 				"Get the current user's Spotify profile. Some fields (email, country, product) are unavailable for newer Spotify apps.",
-			inputSchema: {},
+			inputSchema: z.object({}),
 			annotations: readOnly,
 			outputSchema: outputSchemas.get_me,
 		},
@@ -247,7 +276,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			title: "Search Spotify",
 			description:
 				"Search Spotify for tracks, albums, artists and/or playlists. Returns compact per-type results with names and IDs.",
-			inputSchema: {
+			inputSchema: z.object({
 				query: z
 					.string()
 					.min(1)
@@ -264,7 +293,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.max(1000)
 					.default(0)
 					.describe("Starting index per type; Spotify stops pagination at offset 1000"),
-			},
+			}),
 			annotations: lookup,
 			outputSchema: outputSchemas.search_music,
 		},
@@ -284,13 +313,13 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Track details",
 			description: "Get details for one or more tracks by ID (max 50 per call).",
-			inputSchema: {
+			inputSchema: z.object({
 				ids: z
 					.array(z.string())
 					.min(1)
 					.max(BATCH_MAX.tracks)
 					.describe("Track IDs or spotify:track: URIs"),
-			},
+			}),
 			annotations: lookup,
 			outputSchema: outputSchemas.get_tracks,
 		},
@@ -316,13 +345,13 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			title: "Artist details",
 			description:
 				"Get details for one or more artists (max 50 per call): name, genres, followers, popularity where available. Search with an artist: filter for matching tracks, not an official top-track ranking.",
-			inputSchema: {
+			inputSchema: z.object({
 				ids: z
 					.array(z.string())
 					.min(1)
 					.max(BATCH_MAX.artists)
 					.describe("Artist IDs or spotify:artist: URIs"),
-			},
+			}),
 			annotations: lookup,
 			outputSchema: outputSchemas.get_artist,
 		},
@@ -335,7 +364,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			title: "Artist discography",
 			description:
 				"List an artist's albums, newest first by default. Filter by group to separate studio albums from singles, compilations or guest appearances.",
-			inputSchema: {
+			inputSchema: z.object({
 				id: z.string().describe("Artist ID or spotify:artist: URI"),
 				include_groups: z
 					.array(z.enum(["album", "single", "appears_on", "compilation"]))
@@ -343,7 +372,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.describe("Release types to include (default: all)"),
 				limit: z.number().int().min(1).max(50).default(20),
 				offset: z.number().int().min(0).default(0),
-			},
+			}),
 			annotations: lookup,
 			outputSchema: outputSchemas.get_artist_albums,
 		},
@@ -363,13 +392,13 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			title: "Album details",
 			description:
 				"Get details for one or more albums (max 20 per call), each with its track list.",
-			inputSchema: {
+			inputSchema: z.object({
 				ids: z
 					.array(z.string())
 					.min(1)
 					.max(BATCH_MAX.albums)
 					.describe("Album IDs or spotify:album: URIs"),
-			},
+			}),
 			annotations: lookup,
 			outputSchema: outputSchemas.get_album,
 		},
@@ -393,10 +422,10 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Your playlists",
 			description: "List the current user's playlists: name, id, track count, owner.",
-			inputSchema: {
+			inputSchema: z.object({
 				limit: z.number().int().min(1).max(50).default(20),
 				offset: z.number().int().min(0).default(0),
-			},
+			}),
 			annotations: readOnly,
 			outputSchema: outputSchemas.list_playlists,
 		},
@@ -416,7 +445,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			title: "Playlist contents",
 			description:
 				"Get playlist details and one page of tracks, preserving zero-based positions for missing/local entries. fetch_all reads multiple pages up to max_items. Contents may be inaccessible depending on the app and playlist permissions; this is distinct from an empty playlist.",
-			inputSchema: {
+			inputSchema: z.object({
 				playlist_id: z.string().describe("Playlist ID or spotify:playlist: URI"),
 				limit: z.number().int().min(1).max(50).default(50),
 				offset: z.number().int().min(0).default(0).describe("Index of the first track"),
@@ -430,11 +459,11 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.describe(
 						"Maximum playlist positions for fetch_all (default 1000, maximum 10000); limit remains the page size",
 					),
-			},
+			}),
 			annotations: lookup,
 			outputSchema: outputSchemas.get_playlist,
 		},
-		guard(async ({ playlist_id, limit, offset, fetch_all, max_items }, extra) => {
+		guard(async ({ playlist_id, limit, offset, fetch_all, max_items }, ctx) => {
 			const client = sp();
 			const details = await getPlaylist(client, playlist_id);
 			const tracks: z.infer<typeof outputSchemas.get_playlist>["tracks"] = [];
@@ -443,7 +472,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			let hasNext = false;
 			let inaccessible = false;
 			do {
-				extra.signal.throwIfAborted();
+				ctx.mcpReq.signal.throwIfAborted();
 				try {
 					const page = await getPlaylistTracks(client, playlist_id, {
 						limit: Math.min(limit, cap - tracks.length),
@@ -457,9 +486,9 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 						if (track) tracks.push({ position: start + index, ...compactTrack(track) });
 					}
 					hasNext = page.hasNext || page.tracks.length > remaining;
-					const progressToken = extra._meta?.progressToken;
+					const progressToken = ctx.mcpReq._meta?.progressToken;
 					if (fetch_all && progressToken !== undefined) {
-						await extra.sendNotification({
+						await ctx.mcpReq.notify({
 							method: "notifications/progress",
 							params: {
 								progressToken,
@@ -503,7 +532,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Create playlist",
 			description: "Create a new playlist for the current user.",
-			inputSchema: {
+			inputSchema: z.object({
 				name: z.string().min(1).describe("Name of the new playlist"),
 				description: z.string().optional().describe("Playlist description"),
 				public: z.boolean().default(false).describe("Whether the playlist is public"),
@@ -511,7 +540,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.boolean()
 					.default(false)
 					.describe("Whether the playlist is collaborative (requires public=false)"),
-			},
+			}),
 			annotations: additive,
 			outputSchema: outputSchemas.create_playlist,
 		},
@@ -531,12 +560,12 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Edit playlist details",
 			description: "Update a playlist's name, description or public state.",
-			inputSchema: {
+			inputSchema: z.object({
 				playlist_id: z.string().describe("Playlist ID or URI"),
 				name: z.string().optional().describe("New name"),
 				description: z.string().optional().describe("New description"),
 				public: z.boolean().optional().describe("New public state"),
-			},
+			}),
 			annotations: destructive,
 			outputSchema: outputSchemas.update_playlist_details,
 		},
@@ -558,7 +587,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Add tracks to playlist",
 			description: "Add tracks to a playlist, optionally at a specific position.",
-			inputSchema: {
+			inputSchema: z.object({
 				playlist_id: z.string().describe("Playlist ID or URI"),
 				uris: z
 					.array(z.string())
@@ -571,7 +600,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.min(0)
 					.optional()
 					.describe("Zero-based position to insert at (default: append)"),
-			},
+			}),
 			annotations: additive,
 			outputSchema: outputSchemas.add_tracks_to_playlist,
 		},
@@ -587,42 +616,41 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Remove tracks from playlist",
 			description: "Remove all occurrences of the given tracks from a playlist.",
-			inputSchema: {
+			inputSchema: z.object({
 				playlist_id: z.string().describe("Playlist ID or URI"),
 				uris: z
 					.array(z.string())
 					.min(1)
 					.max(100)
 					.describe("Track IDs or spotify:track: URIs to remove (all occurrences)"),
-			},
+			}),
 			annotations: destructive,
 			outputSchema: outputSchemas.remove_tracks_from_playlist,
 		},
-		guard(async ({ playlist_id, uris }, extra) => {
+		guard(async ({ playlist_id, uris }, ctx): Promise<ToolResult | InputRequiredResult> => {
 			const fullUris = uris.map((u) => toUri("track", u));
-			if (server.server.getClientCapabilities()?.elicitation?.form !== undefined) {
-				const response = await server.server.elicitInput(
-					{
-						mode: "form",
-						message: `Remove all occurrences of ${fullUris.length} track URI(s) from playlist ${playlist_id}?`,
-						requestedSchema: {
-							type: "object",
-							properties: {
-								confirm: { type: "boolean", title: "Confirm removal", default: false },
-							},
-							required: ["confirm"],
+			if (supportsFormElicitation(server, ctx)) {
+				// The client answers and retries this call; the answer arrives here.
+				if (inputResponse(ctx.mcpReq.inputResponses, "confirm").kind === "missing") {
+					return inputRequired({
+						inputRequests: {
+							confirm: inputRequired.elicit({
+								message: `Remove all occurrences of ${fullUris.length} track URI(s) from playlist ${playlist_id}?`,
+								requestedSchema: removalConfirmation,
+							}),
 						},
-					},
-					{ relatedRequestId: extra.requestId, signal: extra.signal },
-				);
-				if (response.action !== "accept" || response.content?.confirm !== true) {
+					});
+				}
+				// Decline, cancel and malformed answers all leave the playlist alone.
+				const answer = acceptedContent(ctx.mcpReq.inputResponses, "confirm", removalConfirmation);
+				if (answer?.confirm !== true) {
 					return ok(
 						{ status: "cancelled", message: "Removal cancelled.", removed: 0 },
 						"Removal cancelled.",
 					);
 				}
 			}
-			extra.signal.throwIfAborted();
+			ctx.mcpReq.signal.throwIfAborted();
 			const snapshot = await removePlaylistTracks(sp(), playlist_id, fullUris);
 			const message = `Removed all occurrences of ${fullUris.length} track URI(s).`;
 			return ok(
@@ -643,7 +671,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			title: "Reorder playlist",
 			description:
 				"Move a track (or a consecutive range) to a different position in a playlist. Use get_playlist first to see current positions.",
-			inputSchema: {
+			inputSchema: z.object({
 				playlist_id: z.string().describe("Playlist ID or URI"),
 				range_start: z
 					.number()
@@ -668,7 +696,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.min(1)
 					.optional()
 					.describe("Playlist snapshot from get_playlist to guard against concurrent edits"),
-			},
+			}),
 			annotations: destructiveOnce,
 			outputSchema: outputSchemas.reorder_playlist,
 		},
@@ -689,10 +717,10 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			title: "Set playlist cover art",
 			description:
 				"Replace a playlist's cover image. Takes an https URL serving a JPEG of at most 192 KB (256 KB once base64-encoded); PNGs and oversized images are rejected before upload.",
-			inputSchema: {
+			inputSchema: z.object({
 				playlist_id: z.string().describe("Playlist ID or URI"),
 				image_url: z.string().describe("https URL of a JPEG image, 192 KB or smaller"),
-			},
+			}),
 			annotations: {
 				readOnlyHint: false,
 				destructiveHint: true,
@@ -715,7 +743,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Follow playlist",
 			description: "Follow a playlist, adding it to the user's library.",
-			inputSchema: { playlist_id: z.string().describe("Playlist ID or URI") },
+			inputSchema: z.object({ playlist_id: z.string().describe("Playlist ID or URI") }),
 			annotations: additiveIdempotent,
 			outputSchema: outputSchemas.follow_playlist,
 		},
@@ -731,7 +759,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			title: "Unfollow or delete playlist",
 			description:
 				"Unfollow (remove from your library) a playlist. For playlists you own this effectively deletes them.",
-			inputSchema: { playlist_id: z.string().describe("Playlist ID or URI") },
+			inputSchema: z.object({ playlist_id: z.string().describe("Playlist ID or URI") }),
 			annotations: destructive,
 			outputSchema: outputSchemas.unfollow_playlist,
 		},
@@ -746,10 +774,10 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Liked songs",
 			description: "List the user's saved (liked) tracks.",
-			inputSchema: {
+			inputSchema: z.object({
 				limit: z.number().int().min(1).max(50).default(20),
 				offset: z.number().int().min(0).default(0),
-			},
+			}),
 			annotations: readOnly,
 			outputSchema: outputSchemas.get_saved_tracks,
 		},
@@ -771,13 +799,13 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Like tracks",
 			description: "Save (like) tracks to the user's library.",
-			inputSchema: {
+			inputSchema: z.object({
 				ids: z
 					.array(z.string())
 					.min(1)
 					.max(LIBRARY_WRITE_MAX)
 					.describe("Track IDs or spotify:track: URIs"),
-			},
+			}),
 			annotations: additiveIdempotent,
 			outputSchema: outputSchemas.save_tracks,
 		},
@@ -792,13 +820,13 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Unlike tracks",
 			description: "Remove tracks from the user's saved (liked) tracks.",
-			inputSchema: {
+			inputSchema: z.object({
 				ids: z
 					.array(z.string())
 					.min(1)
 					.max(LIBRARY_WRITE_MAX)
 					.describe("Track IDs or spotify:track: URIs"),
-			},
+			}),
 			annotations: destructive,
 			outputSchema: outputSchemas.remove_saved_tracks,
 		},
@@ -813,10 +841,10 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Saved albums",
 			description: "List the albums saved to the user's library.",
-			inputSchema: {
+			inputSchema: z.object({
 				limit: z.number().int().min(1).max(50).default(20),
 				offset: z.number().int().min(0).default(0),
-			},
+			}),
 			annotations: readOnly,
 			outputSchema: outputSchemas.get_saved_albums,
 		},
@@ -838,13 +866,13 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Save albums",
 			description: "Save albums to the user's library.",
-			inputSchema: {
+			inputSchema: z.object({
 				ids: z
 					.array(z.string())
 					.min(1)
 					.max(LIBRARY_WRITE_MAX)
 					.describe("Album IDs or spotify:album: URIs"),
-			},
+			}),
 			annotations: additiveIdempotent,
 			outputSchema: outputSchemas.save_albums,
 		},
@@ -859,13 +887,13 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Remove saved albums",
 			description: "Remove albums from the user's library.",
-			inputSchema: {
+			inputSchema: z.object({
 				ids: z
 					.array(z.string())
 					.min(1)
 					.max(LIBRARY_WRITE_MAX)
 					.describe("Album IDs or spotify:album: URIs"),
-			},
+			}),
 			annotations: destructive,
 			outputSchema: outputSchemas.remove_saved_albums,
 		},
@@ -880,7 +908,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Followed artists",
 			description: "List the artists the user follows.",
-			inputSchema: { limit: z.number().int().min(1).max(50).default(20) },
+			inputSchema: z.object({ limit: z.number().int().min(1).max(50).default(20) }),
 			annotations: readOnly,
 			outputSchema: outputSchemas.get_followed_artists,
 		},
@@ -895,13 +923,13 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Follow artists",
 			description: "Follow artists on behalf of the user.",
-			inputSchema: {
+			inputSchema: z.object({
 				ids: z
 					.array(z.string())
 					.min(1)
 					.max(LIBRARY_WRITE_MAX)
 					.describe("Artist IDs or spotify:artist: URIs"),
-			},
+			}),
 			annotations: additiveIdempotent,
 			outputSchema: outputSchemas.follow_artists,
 		},
@@ -916,13 +944,13 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Unfollow artists",
 			description: "Stop following artists.",
-			inputSchema: {
+			inputSchema: z.object({
 				ids: z
 					.array(z.string())
 					.min(1)
 					.max(LIBRARY_WRITE_MAX)
 					.describe("Artist IDs or spotify:artist: URIs"),
-			},
+			}),
 			annotations: destructive,
 			outputSchema: outputSchemas.unfollow_artists,
 		},
@@ -938,14 +966,14 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			title: "Check library",
 			description:
 				"Check whether items are already saved, or artists already followed, in one call (max 40 IDs, 20 for albums). Use before a save or follow instead of paging the library.",
-			inputSchema: {
+			inputSchema: z.object({
 				kind: z.enum(["track", "album", "artist", "show", "episode", "audiobook"]),
 				ids: z
 					.array(z.string())
 					.min(1)
 					.max(CONTAINS_MAX.track)
 					.describe("IDs or spotify: URIs of one kind"),
-			},
+			}),
 			annotations: readOnly,
 			outputSchema: outputSchemas.check_library,
 		},
@@ -970,10 +998,10 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Saved podcasts",
 			description: "List the podcast shows saved to the user's library.",
-			inputSchema: {
+			inputSchema: z.object({
 				limit: z.number().int().min(1).max(50).default(20),
 				offset: z.number().int().min(0).default(0),
-			},
+			}),
 			annotations: readOnly,
 			outputSchema: outputSchemas.get_saved_shows,
 		},
@@ -995,13 +1023,13 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Save podcasts",
 			description: "Save (follow) podcast shows to the user's library.",
-			inputSchema: {
+			inputSchema: z.object({
 				ids: z
 					.array(z.string())
 					.min(1)
 					.max(LIBRARY_WRITE_MAX)
 					.describe("Show IDs or spotify:show: URIs"),
-			},
+			}),
 			annotations: additiveIdempotent,
 			outputSchema: outputSchemas.save_shows,
 		},
@@ -1016,13 +1044,13 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Remove saved podcasts",
 			description: "Remove podcast shows from the user's library.",
-			inputSchema: {
+			inputSchema: z.object({
 				ids: z
 					.array(z.string())
 					.min(1)
 					.max(LIBRARY_WRITE_MAX)
 					.describe("Show IDs or spotify:show: URIs"),
-			},
+			}),
 			annotations: destructive,
 			outputSchema: outputSchemas.remove_saved_shows,
 		},
@@ -1038,11 +1066,11 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			title: "Podcast episodes",
 			description:
 				"List a podcast show's episodes, newest first, with the user's resume point for each.",
-			inputSchema: {
+			inputSchema: z.object({
 				show_id: z.string().describe("Show ID, URI or link"),
 				limit: z.number().int().min(1).max(50).default(20),
 				offset: z.number().int().min(0).default(0),
-			},
+			}),
 			annotations: lookup,
 			outputSchema: outputSchemas.get_show_episodes,
 		},
@@ -1057,10 +1085,10 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Saved episodes",
 			description: "List the podcast episodes saved to the user's library.",
-			inputSchema: {
+			inputSchema: z.object({
 				limit: z.number().int().min(1).max(50).default(20),
 				offset: z.number().int().min(0).default(0),
-			},
+			}),
 			annotations: readOnly,
 			outputSchema: outputSchemas.get_saved_episodes,
 		},
@@ -1082,13 +1110,13 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Save episodes",
 			description: "Save podcast episodes to the user's library.",
-			inputSchema: {
+			inputSchema: z.object({
 				ids: z
 					.array(z.string())
 					.min(1)
 					.max(LIBRARY_WRITE_MAX)
 					.describe("Episode IDs or spotify:episode: URIs"),
-			},
+			}),
 			annotations: additiveIdempotent,
 			outputSchema: outputSchemas.save_episodes,
 		},
@@ -1103,13 +1131,13 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Remove saved episodes",
 			description: "Remove podcast episodes from the user's library.",
-			inputSchema: {
+			inputSchema: z.object({
 				ids: z
 					.array(z.string())
 					.min(1)
 					.max(LIBRARY_WRITE_MAX)
 					.describe("Episode IDs or spotify:episode: URIs"),
-			},
+			}),
 			annotations: destructive,
 			outputSchema: outputSchemas.remove_saved_episodes,
 		},
@@ -1124,10 +1152,10 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Saved audiobooks",
 			description: "List the audiobooks saved to the user's library.",
-			inputSchema: {
+			inputSchema: z.object({
 				limit: z.number().int().min(1).max(50).default(20),
 				offset: z.number().int().min(0).default(0),
-			},
+			}),
 			annotations: readOnly,
 			outputSchema: outputSchemas.get_saved_audiobooks,
 		},
@@ -1149,13 +1177,13 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Save audiobooks",
 			description: "Save audiobooks to the user's library.",
-			inputSchema: {
+			inputSchema: z.object({
 				ids: z
 					.array(z.string())
 					.min(1)
 					.max(LIBRARY_WRITE_MAX)
 					.describe("Audiobook IDs or spotify:audiobook: URIs"),
-			},
+			}),
 			annotations: additiveIdempotent,
 			outputSchema: outputSchemas.save_audiobooks,
 		},
@@ -1170,13 +1198,13 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Remove saved audiobooks",
 			description: "Remove audiobooks from the user's library.",
-			inputSchema: {
+			inputSchema: z.object({
 				ids: z
 					.array(z.string())
 					.min(1)
 					.max(LIBRARY_WRITE_MAX)
 					.describe("Audiobook IDs or spotify:audiobook: URIs"),
-			},
+			}),
 			annotations: destructive,
 			outputSchema: outputSchemas.remove_saved_audiobooks,
 		},
@@ -1192,7 +1220,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			title: "Now playing",
 			description:
 				"Get the current playback state: playing track, device, progress, shuffle/repeat.",
-			inputSchema: {},
+			inputSchema: z.object({}),
 			annotations: readOnly,
 			outputSchema: outputSchemas.get_playback_state,
 		},
@@ -1239,7 +1267,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			title: "Control playback",
 			description:
 				"Control playback: play (optionally a context or tracks), pause, next, previous, seek, volume, shuffle, repeat. Requires an active Spotify device and Premium.",
-			inputSchema: {
+			inputSchema: z.object({
 				action: z.enum([
 					"play",
 					"pause",
@@ -1283,7 +1311,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 					.string()
 					.optional()
 					.describe("Target device ID (default: the currently active device)"),
-			},
+			}),
 			annotations: additive,
 			outputSchema: outputSchemas.control_playback,
 		},
@@ -1337,7 +1365,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Playback queue",
 			description: "Get the current playback queue: now playing plus upcoming tracks.",
-			inputSchema: {},
+			inputSchema: z.object({}),
 			annotations: readOnly,
 			outputSchema: outputSchemas.get_queue,
 		},
@@ -1355,10 +1383,10 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Queue a track or episode",
 			description: "Add a track or podcast episode to the playback queue.",
-			inputSchema: {
+			inputSchema: z.object({
 				uri: z.string().describe("Track ID, or a track or episode URI or link"),
 				device_id: z.string().optional().describe("Target device ID"),
-			},
+			}),
 			annotations: additive,
 			outputSchema: outputSchemas.add_to_queue,
 		},
@@ -1373,7 +1401,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Available devices",
 			description: "List the user's available Spotify devices.",
-			inputSchema: {},
+			inputSchema: z.object({}),
 			annotations: readOnly,
 			outputSchema: outputSchemas.list_devices,
 		},
@@ -1396,10 +1424,10 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Switch device",
 			description: "Transfer playback to a different device (see list_devices).",
-			inputSchema: {
+			inputSchema: z.object({
 				device_id: z.string().describe("Target device ID"),
 				play: z.boolean().default(true).describe("Start playing after transfer"),
-			},
+			}),
 			annotations: additiveIdempotent,
 			outputSchema: outputSchemas.transfer_playback,
 		},
@@ -1414,7 +1442,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 		{
 			title: "Recently played",
 			description: "List recently played tracks, most recent first.",
-			inputSchema: { limit: z.number().int().min(1).max(50).default(20) },
+			inputSchema: z.object({ limit: z.number().int().min(1).max(50).default(20) }),
 			annotations: readOnly,
 			outputSchema: outputSchemas.get_recently_played,
 		},
@@ -1436,14 +1464,14 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			title: "Top artists and tracks",
 			description:
 				"Get the user's top artists or tracks over a time range, as reported by Spotify. Availability and optional fields depend on app access.",
-			inputSchema: {
+			inputSchema: z.object({
 				type: z.enum(["artists", "tracks"]),
 				time_range: z
 					.enum(["short_term", "medium_term", "long_term"])
 					.default("medium_term")
 					.describe("short_term ~4 weeks, medium_term ~6 months, long_term ~years"),
 				limit: z.number().int().min(1).max(50).default(20),
-			},
+			}),
 			annotations: readOnly,
 			outputSchema: outputSchemas.get_top_items,
 		},
@@ -1465,7 +1493,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			title: "Find similar artists",
 			description:
 				"Look up artists the user identifies as similar; no related-artist ranking is provided.",
-			argsSchema: { artist: z.string().describe("Artist to use as the starting point") },
+			argsSchema: z.object({ artist: z.string().describe("Artist to use as the starting point") }),
 		},
 		({ artist }) => ({
 			messages: [
@@ -1489,12 +1517,12 @@ Show the matching names and available metadata, then ask before saving or buildi
 		{
 			title: "Profile my listening",
 			description: "Summarise listening habits from top items and recent plays.",
-			argsSchema: {
+			argsSchema: z.object({
 				time_range: z
 					.string()
 					.optional()
 					.describe("short_term (~4 weeks), medium_term (~6 months) or long_term"),
-			},
+			}),
 		},
 		({ time_range }) => ({
 			messages: [
@@ -1516,10 +1544,10 @@ Use get_top_items for both artists and tracks, plus get_recently_played. Summari
 		{
 			title: "Build a playlist",
 			description: "Look up user-selected tracks and create a playlist after approval.",
-			argsSchema: {
+			argsSchema: z.object({
 				vibe: z.string().describe("What the playlist is for, e.g. 'rainy sunday morning'"),
 				size: z.string().optional().describe("Number of tracks (default 20)"),
-			},
+			}),
 		},
 		({ vibe, size }) => ({
 			messages: [
