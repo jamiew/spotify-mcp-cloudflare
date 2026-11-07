@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-07 — 0.9.2
+
+- The local stdio server starts without `SPOTIFY_CLIENT_ID` or a prior login, so clients, registries and headless `.mcp.json` runs can initialize it and list tools. Tool calls that need Spotify return "Spotify isn't set up for this local server. Set SPOTIFY_CLIENT_ID, run pnpm run login, then restart the server." An unconfigured server holds no lock on the token store, so `pnpm run login` works while it runs. `login` still requires `SPOTIFY_CLIENT_ID`, and a mismatched or under-scoped stored login still stops startup.
+
 ## 2026-11-07 — 0.9.1
 
 - Cancelling a tool call now stops its Spotify request. The MCP request's abort signal reaches every upstream `fetch` and any `Retry-After` wait. Each Spotify attempt also has a 15 second deadline; a timed-out call reports "The request timed out. Try again shortly." Stateless 2025-era HTTP clients can't deliver cancellation to the running request, so only the deadline applies there.
