@@ -134,8 +134,8 @@ no enforced read-only tier.
 
 ## Tools and prompts
 
-44 tools. Track, episode, album, show, artist and playlist arguments accept bare
-IDs, `spotify:` URIs or `open.spotify.com` links.
+Track, episode, album, show, artist and playlist arguments accept bare IDs,
+`spotify:` URIs or `open.spotify.com` links.
 Results are compact structured objects; playback writes acknowledge the request,
 not confirmed device state.
 

@@ -4,6 +4,7 @@
 
 - Cancelling a tool call now stops its Spotify request. The MCP request's abort signal reaches every upstream `fetch` and any `Retry-After` wait. Each Spotify attempt also has a 15 second deadline; a timed-out call reports "The request timed out. Try again shortly." Stateless 2025-era HTTP clients can't deliver cancellation to the running request, so only the deadline applies there.
 - `set_playlist_cover` no longer buffers the whole image before checking its size. It refuses a declared `Content-Length` over 192 KB without reading the body, streams the rest and stops as soon as it passes 192 KB, and gives up on a download that outlives the deadline. The oversize error now counts raw bytes (192 KB), not base64 (256 KB).
+- `check:meta` lists tools and prompts through an in-process MCP client instead of matching source with regexes. It keeps the README name check and the description budgets, and drops the README tool count. `@modelcontextprotocol/client` moves to `devDependencies`; only tests and scripts import it, and the Worker bundle is unchanged.
 
 ## 2026-11-07 — 0.9.0
 

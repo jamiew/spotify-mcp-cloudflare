@@ -1,17 +1,31 @@
 // Meta-lint: keeps docs and the MCP tool surface honest with each other.
-// Run with `pnpm check:meta`. Designed as a guardrail for automated/LLM edits:
-// - every registered tool and prompt (src/tools.ts) must be mentioned in README.md
-// - README's stated tool count must match the code
-// - tool descriptions have a token budget (they're loaded into every client's
+// Run with `pnpm check:meta`. It lists the real surface through an in-process
+// MCP client, so it sees exactly what a client sees:
+// - every tool and prompt must be mentioned in README.md
+// - tool descriptions have a size budget (they're loaded into every client's
 //   context window on connect)
 // src/local/mcp-json.test.ts enforces behavior annotations on the running server.
 import { readFileSync } from "node:fs";
-
-const src = readFileSync(new URL("../src/tools.ts", import.meta.url), "utf8");
-const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { createSpotifyServer } from "../src/server";
 
 const DESCRIPTION_BUDGET_CHARS = 300; // per tool
 const TOTAL_BUDGET_CHARS = 5000; // whole tool surface
+
+const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+
+// Listing never calls Spotify, so the client factory is never invoked.
+const server = createSpotifyServer(() => {
+	throw new Error("check-meta never calls a tool");
+});
+const client = new Client({ name: "check-meta", version: "0" });
+const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+await server.connect(serverTransport);
+await client.connect(clientTransport);
+const { tools } = await client.listTools();
+const { prompts } = await client.listPrompts();
+await client.close();
+await server.close();
 
 let failures = 0;
 function fail(msg: string) {
@@ -19,49 +33,26 @@ function fail(msg: string) {
 	failures += 1;
 }
 
-// One chunk per tool: everything from its name to the start of its handler.
-const toolBlocks = [...src.matchAll(/registerTool\(\s*\n?\s*"([a-z_]+)",([\s\S]*?)\n\t+guard\(/g)];
-const toolNames = toolBlocks.map((m) => m[1] ?? "");
-if (toolNames.length === 0) fail("found no registerTool calls in src/tools.ts (parser broken?)");
-const dupes = toolNames.filter((n, i) => toolNames.indexOf(n) !== i);
-if (dupes.length > 0) fail(`duplicate tool registrations: ${dupes.join(", ")}`);
+if (tools.length === 0) fail("the server lists no tools");
 
-const promptNames = [...src.matchAll(/registerPrompt\(\s*\n?\s*"([a-z_]+)"/g)].map(
-	(m) => m[1] ?? "",
-);
-
-// Every tool and prompt must be documented in the README
-for (const name of [...toolNames, ...promptNames]) {
+for (const { name } of [...tools, ...prompts]) {
 	if (!readme.includes(`\`${name}\``)) fail(`${name} is not mentioned in README.md`);
 }
 
-// README's stated count must match reality
-const countClaim = readme.match(/(\d+) tools\./);
-if (!countClaim) {
-	fail('README.md no longer states the tool count ("N tools.")');
-} else if (Number(countClaim[1]) !== toolNames.length) {
-	fail(`README claims ${countClaim[1]} tools but code registers ${toolNames.length}`);
-}
-
-// Description token budgets
-const descriptions = toolBlocks.map(
-	(m) => /description:\s*\n?\s*"((?:[^"\\]|\\.)*)"/.exec(m[2] ?? "")?.[1] ?? "",
-);
-if (descriptions.some((d) => d === "")) {
-	fail("some tools have no parseable description (parser drift?)");
-}
-for (const d of descriptions) {
-	if (d.length > DESCRIPTION_BUDGET_CHARS) {
-		fail(`description over ${DESCRIPTION_BUDGET_CHARS} chars: "${d.slice(0, 60)}..."`);
+let total = 0;
+for (const { name, description = "" } of tools) {
+	if (description === "") fail(`${name} has no description`);
+	if (description.length > DESCRIPTION_BUDGET_CHARS) {
+		fail(`${name} description is ${description.length} chars, over ${DESCRIPTION_BUDGET_CHARS}`);
 	}
+	total += description.length;
 }
-const total = descriptions.reduce((sum, d) => sum + d.length, 0);
 if (total > TOTAL_BUDGET_CHARS) {
 	fail(`total description size ${total} chars exceeds budget ${TOTAL_BUDGET_CHARS}`);
 }
 
 console.log(
-	`check-meta: ${toolNames.length} tools, ${promptNames.length} prompts, ${total} chars of descriptions` +
-		(failures ? `, ${failures} failure(s)` : " — all good"),
+	`check-meta: ${tools.length} tools, ${prompts.length} prompts, ${total} chars of descriptions` +
+		(failures ? `, ${failures} failure(s)` : ", all good"),
 );
 process.exit(failures === 0 ? 0 : 1);
