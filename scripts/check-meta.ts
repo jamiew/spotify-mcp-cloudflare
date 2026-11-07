@@ -1,10 +1,10 @@
-// Meta-lint: keeps code, docs, and the MCP tool surface honest with each other.
+// Meta-lint: keeps docs and the MCP tool surface honest with each other.
 // Run with `pnpm check:meta`. Designed as a guardrail for automated/LLM edits:
 // - every registered tool and prompt (src/tools.ts) must be mentioned in README.md
 // - README's stated tool count must match the code
-// - every tool must carry MCP behaviour annotations
 // - tool descriptions have a token budget (they're loaded into every client's
 //   context window on connect)
+// src/local/mcp-json.test.ts enforces behavior annotations on the running server.
 import { readFileSync } from "node:fs";
 
 const src = readFileSync(new URL("../src/tools.ts", import.meta.url), "utf8");
@@ -33,27 +33,6 @@ const promptNames = [...src.matchAll(/registerPrompt\(\s*\n?\s*"([a-z_]+)"/g)].m
 // Every tool and prompt must be documented in the README
 for (const name of [...toolNames, ...promptNames]) {
 	if (!readme.includes(`\`${name}\``)) fail(`${name} is not mentioned in README.md`);
-}
-
-// Behaviour annotations drive client confirmation prompts, so a tool without
-// them silently defaults to "destructive, open world".
-// Tools share named annotation constants; resolve one to its definition so
-// the checks below see the literal hints.
-function resolveAnnotations(block: string): string {
-	const named = /annotations:\s*([A-Za-z_]+)\s*,/.exec(block)?.[1];
-	if (!named) return block;
-	const definition = new RegExp(`const ${named} = \\{([^}]*)\\}`).exec(src)?.[1] ?? "";
-	// Spreads pull in another constant's hints; the property after wins.
-	const base = /\.\.\.([A-Za-z_]+)/.exec(definition)?.[1];
-	const inherited = base ? resolveAnnotations(`annotations: ${base},`) : "";
-	return `${inherited} ${definition.replace(/\.\.\.[A-Za-z_]+,?/, "")}`;
-}
-for (const [i, name] of toolNames.entries()) {
-	const block = resolveAnnotations(toolBlocks[i]?.[2] ?? "");
-	if (!block.includes("readOnlyHint")) fail(`tool ${name} has no readOnlyHint annotation`);
-	if (block.includes("readOnlyHint: false") && !block.includes("destructiveHint")) {
-		fail(`writing tool ${name} has no destructiveHint annotation`);
-	}
 }
 
 // README's stated count must match reality

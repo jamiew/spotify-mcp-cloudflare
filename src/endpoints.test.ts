@@ -7,7 +7,6 @@ import {
 	compactTrack,
 	controlPlayback,
 	createPlaylist,
-	followArtists,
 	getAlbums,
 	getArtists,
 	getPlaybackState,
@@ -21,10 +20,9 @@ import {
 	libraryContains,
 	removePlaylistTracks,
 	reorderPlaylistTracks,
-	saveTracks,
 	search,
 	setPlaylistCover,
-	writeMediaLibrary,
+	writeLibrary,
 } from "./endpoints";
 import { fakeSpotify, type SeenRequest, staticTokens } from "./fake-spotify";
 import { SpotifyClient } from "./spotify";
@@ -427,13 +425,13 @@ describe("createPlaylist", () => {
 	});
 });
 
-describe("saveTracks", () => {
-	it("PUTs uris to /me/library, falling back to legacy /me/tracks ids", async () => {
+describe("writeLibrary", () => {
+	it("PUTs track uris to /me/library, falling back to a legacy /me/tracks body of ids", async () => {
 		const { client, seen } = makeClient({
 			"PUT /v1/me/library": notFound,
 			"PUT /v1/me/tracks": () => new Response(null, { status: 200 }),
 		});
-		await saveTracks(client, ["t1", "spotify:track:t2"]);
+		await writeLibrary(client, "PUT", "track", ["t1", "spotify:track:t2"]);
 		expect(seen[0]?.query.get("uris")).toBe("spotify:track:t1,spotify:track:t2");
 		expect(seen[0]?.body).toBeUndefined();
 		expect(seen[1]?.body).toEqual({ ids: ["t1", "t2"] });
@@ -531,25 +529,25 @@ describe("getSavedAlbums", () => {
 	});
 });
 
-describe("followArtists", () => {
+describe("writeLibrary for artists", () => {
 	it("PUTs uris to /me/library, falling back to legacy /me/following ids", async () => {
 		const { client, seen } = makeClient({
 			"PUT /v1/me/library": notFound,
 			"PUT /v1/me/following": () => new Response(null, { status: 204 }),
 		});
-		await followArtists(client, ["a1", "spotify:artist:a2"]);
+		await writeLibrary(client, "PUT", "artist", ["a1", "spotify:artist:a2"]);
 		expect(seen[0]?.query.get("uris")).toBe("spotify:artist:a1,spotify:artist:a2");
 		expect(seen[1]?.body).toEqual({ ids: ["a1", "a2"] });
 		expect(seen[1]?.query.get("type")).toBe("artist");
 	});
 });
 
-describe("writeMediaLibrary", () => {
+describe("writeLibrary for podcasts and audiobooks", () => {
 	it("sends uris to /me/library in the restricted regime", async () => {
 		const { client, seen } = makeClient({
 			"PUT /v1/me/library": () => new Response(null, { status: 200 }),
 		});
-		await writeMediaLibrary(client, "PUT", "show", ["s1", "https://open.spotify.com/show/s2"]);
+		await writeLibrary(client, "PUT", "show", ["s1", "https://open.spotify.com/show/s2"]);
 		expect(seen.map((s) => `${s.method} ${s.path}?${s.query}`)).toEqual([
 			"PUT /v1/me/library?uris=spotify%3Ashow%3As1%2Cspotify%3Ashow%3As2",
 		]);
@@ -561,7 +559,7 @@ describe("writeMediaLibrary", () => {
 			"DELETE /v1/me/library": notFound,
 			"DELETE /v1/me/audiobooks": () => new Response(null, { status: 200 }),
 		});
-		await writeMediaLibrary(client, "DELETE", "audiobook", ["b1", "spotify:audiobook:b2"]);
+		await writeLibrary(client, "DELETE", "audiobook", ["b1", "spotify:audiobook:b2"]);
 		expect(seen.map((s) => `${s.method} ${s.path}?${s.query}`)).toEqual([
 			// /me/library rejects audiobook URIs but takes the id as a show.
 			"DELETE /v1/me/library?uris=spotify%3Ashow%3Ab1%2Cspotify%3Ashow%3Ab2",
@@ -576,7 +574,7 @@ describe("writeMediaLibrary", () => {
 				Response.json({ error: { status: 502, message: "Bad gateway" } }, { status: 502 }),
 			"PUT /v1/me/shows": () => new Response(null, { status: 200 }),
 		});
-		await expect(writeMediaLibrary(client, "PUT", "show", ["s1"])).rejects.toMatchObject({
+		await expect(writeLibrary(client, "PUT", "show", ["s1"])).rejects.toMatchObject({
 			status: 502,
 		});
 		expect(seen).toHaveLength(1);

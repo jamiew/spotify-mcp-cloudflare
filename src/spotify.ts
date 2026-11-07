@@ -4,7 +4,10 @@
 
 import type { z } from "zod";
 
-export const SPOTIFY_API_BASE_URL = "https://api.spotify.com/v1";
+const API_BASE_URL = "https://api.spotify.com/v1";
+const MAX_RATE_LIMIT_RETRIES = 2;
+/** Longer Retry-After values go back to the caller instead of being waited out. */
+const MAX_RETRY_AFTER_SECONDS = 5;
 
 export class SpotifyApiError extends Error {
 	constructor(
@@ -75,17 +78,13 @@ export interface RequestSpec {
 	method?: "GET" | "POST" | "PUT" | "DELETE";
 	query?: Record<string, string | number | boolean | undefined>;
 	body?: unknown;
-	/** Sends this verbatim instead of JSON — the playlist cover upload is image/jpeg. */
+	/** Sends this verbatim instead of JSON. The playlist cover upload is image/jpeg. */
 	raw?: { contentType: string; body: string };
 }
 
 export interface SpotifyClientOptions {
 	tokenProvider: TokenProvider;
-	apiBaseUrl?: string;
 	fetchImpl?: typeof fetch;
-	maxRateLimitRetries?: number;
-	/** Surface longer Retry-After values instead of retrying before Spotify permits. */
-	maxRetryAfterSeconds?: number;
 	sleep?: (ms: number) => Promise<void>;
 	/**
 	 * Regime answers to share between clients. The regime belongs to the app,
@@ -102,21 +101,15 @@ const REGIME_MISS_STATUSES = [400, 404, 405, 410];
 
 export class SpotifyClient {
 	private readonly tokenProvider: TokenProvider;
-	private readonly baseUrl: string;
 	private readonly fetchImpl: typeof fetch;
-	private readonly maxRateLimitRetries: number;
-	private readonly maxRetryAfterSeconds: number;
 	private readonly sleep: (ms: number) => Promise<void>;
 	/** Endpoint families confirmed to need their fallback path. */
 	private readonly fallbackFamilies: Set<string>;
 
 	constructor(options: SpotifyClientOptions) {
 		this.tokenProvider = options.tokenProvider;
-		this.baseUrl = (options.apiBaseUrl ?? SPOTIFY_API_BASE_URL).replace(/\/+$/, "");
 		// Bind: workers' native fetch throws "Illegal invocation" if called as a method.
 		this.fetchImpl = options.fetchImpl ?? fetch.bind(globalThis);
-		this.maxRateLimitRetries = options.maxRateLimitRetries ?? 2;
-		this.maxRetryAfterSeconds = options.maxRetryAfterSeconds ?? 5;
 		this.sleep = options.sleep ?? defaultSleep;
 		this.fallbackFamilies = options.fallbackFamilies ?? new Set();
 	}
@@ -211,10 +204,7 @@ export class SpotifyClient {
 					throw new RateLimitedError(this.retryAfterSeconds(response), true);
 				}
 				const waitSeconds = this.retryAfterSeconds(response) ?? 1;
-				if (
-					rateLimitRetries >= this.maxRateLimitRetries ||
-					waitSeconds > this.maxRetryAfterSeconds
-				) {
+				if (rateLimitRetries >= MAX_RATE_LIMIT_RETRIES || waitSeconds > MAX_RETRY_AFTER_SECONDS) {
 					throw new RateLimitedError(waitSeconds);
 				}
 				rateLimitRetries += 1;
@@ -255,7 +245,7 @@ export class SpotifyClient {
 		path: string,
 		query?: Record<string, string | number | boolean | undefined>,
 	): string {
-		const url = new URL(this.baseUrl + path);
+		const url = new URL(API_BASE_URL + path);
 		if (query) {
 			for (const [key, value] of Object.entries(query)) {
 				if (value !== undefined) url.searchParams.set(key, String(value));
@@ -312,7 +302,7 @@ export class SpotifyClient {
 				}
 			}
 		} catch {
-			// Not JSON — fall through to the raw body.
+			// Not JSON: fall through to the raw body.
 		}
 		return text.slice(0, 200);
 	}
@@ -361,8 +351,4 @@ export function toPlayableUri(ref: string): string {
 /** Strips a `spotify:kind:` prefix or share-URL wrapper, returning the bare ID. */
 export function toId(ref: string): string {
 	return parseRef(ref)?.id ?? ref;
-}
-
-export function clamp(n: number, lo: number, hi: number): number {
-	return Math.max(lo, Math.min(hi, n));
 }

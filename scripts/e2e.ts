@@ -162,12 +162,7 @@ function check(name: string, condition: boolean, detail?: any) {
 
 // biome-ignore lint/suspicious/noExplicitAny: structuredContent is schemaless here
 function structured(result: any): any {
-	if (result.structuredContent) return result.structuredContent;
-	try {
-		return JSON.parse(result.content?.[0]?.text ?? "null");
-	} catch {
-		return undefined; // plain-text result like "No active playback."
-	}
+	return result.structuredContent;
 }
 
 async function main() {
@@ -239,7 +234,6 @@ async function exercise(client: Client, lane: Lane) {
 		count: saved?.tracks?.length,
 	});
 
-	// May legitimately be "No active playback." (plain text, no structure)
 	const playback = await client.callTool({ name: "get_playback_state", arguments: {} });
 	check("get_playback_state answers", playback.isError !== true);
 

@@ -7,7 +7,7 @@ The Worker tests run offline against `src/fake-spotify.ts`. On 2026-07-26 all
 Three separate bugs sat exactly where the suite substitutes a fake:
 
 - the fake injects an arrow-function `fetchImpl`, so the real `fetch`'s receiver
-  check — a genuine "Illegal invocation" crash in workerd — was unobservable;
+  check, a genuine "Illegal invocation" crash in workerd, was unobservable;
 - `SPOTIFY_SCOPES` is configuration no fake consults, so two tools that could
   never have worked looked fine;
 - no test drives `withFallback` with a real 400, so its threshold was wrong.
@@ -22,7 +22,7 @@ and cover it in `scripts/e2e.ts` instead.
 ## Traps when verifying live
 
 **Scope changes need the user to re-authenticate.** Adding a scope to
-`SPOTIFY_SCOPES` does not upgrade the existing token — it keeps the scopes it was
+`SPOTIFY_SCOPES` does not upgrade the existing token; it keeps the scopes it was
 minted with. Ask the user to run `/mcp` and reconnect, then retest.
 
 Each reconnect makes a new grant with its own Spotify tokens, and the grant is
@@ -40,6 +40,11 @@ before concluding it's wrong.
 ones, and most hosts are still 2025-era. Those get a fresh server per request
 with no session, so the server can't ask them anything (elicitation). `pnpm e2e`
 and `src/tools.test.ts` cover both lanes; keep it that way.
+
+`.mcp.json` has two entries: `spotify` is the deployed Worker and
+`spotify-local` runs this checkout's stdio server. The local one needs
+`SPOTIFY_CLIENT_ID` in the environment and a prior `pnpm run login`.
+`src/local/mcp-json.test.ts` launches that exact entry on both eras.
 
 ## Regimes
 
@@ -68,8 +73,8 @@ create it private and tell them to confirm in the Spotify app.
 
 ## New tools need annotations
 
-Every tool declares MCP behaviour hints, and `pnpm check:meta` fails without
-them. Get `destructiveHint` right rather than safe-by-default: clients use it to
+Every tool declares MCP behaviour hints, and `src/local/mcp-json.test.ts` fails
+without them. Get `destructiveHint` right rather than safe-by-default: clients use it to
 decide what to confirm with the user, so marking an additive tool destructive
 trains people to click through the prompts that matter. Destructive means
 overwrites or deletes existing data (`remove_saved_tracks`, `unfollow_playlist`,

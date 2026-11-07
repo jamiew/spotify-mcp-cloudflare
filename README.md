@@ -18,8 +18,10 @@ with a different set of tools, resources and prompts.
 The invited instance is **`https://spotify-mcp-cloudflare.jamie-7e9.workers.dev/mcp`**
 (stateless Streamable HTTP; serves MCP 2026-07-28 and 2025-era clients). It is not public enrollment: you need an
 invitation and access through both the Worker and Spotify dashboard allowlists.
-Its deployed revision can lag this branch. The checked-in `.mcp.json` uses this
-restricted instance; replace its URL for your own deployment.
+Its deployed revision can lag this branch. In the checked-in `.mcp.json`,
+`spotify` uses this restricted instance; replace its URL for your own deployment.
+`spotify-local` runs this checkout's stdio server; it needs `SPOTIFY_CLIENT_ID`
+exported and a prior `pnpm run login` (see below).
 
 ## Native local stdio
 
@@ -154,7 +156,7 @@ or grant permission to send Spotify content to a model:
 | --- | --- | --- |
 | `discover_similar` | `artist` | Explore artist metadata and search, not an equivalent related-artists API |
 | `taste_profile` | `time_range` | Summarize history with policy and inference limits |
-| `build_playlist` | `vibe`, `size` | Draft from history, confirm, then create |
+| `build_playlist` | `vibe`, `size` | Collect your picks, confirm, then create |
 
 ### Important behavior
 

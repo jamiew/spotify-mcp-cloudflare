@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2026-11-07 — 0.9.0
 
 - **MCP SDK v2, stateless Worker.** `McpAgent`, MCP SDK v1 and the Durable Object are gone. `/mcp` now runs `createMcpHandler` from `agents` 0.33 on `@modelcontextprotocol/server` 2.4. It speaks the 2026-07-28 revision and still serves 2025-era clients, each request on a fresh server. Local stdio moves to `serveStdio` and negotiates either era too. The gzipped Worker drops from 712 KiB to 308 KiB.
 - **The OAuth grant owns the Spotify tokens.** Before, each MCP session's Durable Object refreshed its own copy. Now the provider's token exchange callback renews Spotify when a client refreshes and writes the result back to the grant, so every session of a grant shares one refresh chain, including a rotated Spotify refresh token. MCP access tokens expire five minutes before the Spotify token they carry. A request whose Spotify token has already lapsed (grants from before this release) gets a 401 that makes the client refresh. Spotify `invalid_grant` revokes the grant; a Spotify outage returns `temporarily_unavailable` and keeps it. A removed allowlist account is revoked at its next refresh.
@@ -9,6 +9,9 @@
 - Endpoint regime answers are now shared across requests in a Worker isolate instead of per session, since the regime belongs to the app.
 - Tests drive the real tool surface on three lanes (2026-07-28 over HTTP, 2025 over stateless HTTP, 2025 with a session) and the Worker end to end in workerd with real grants, refreshes and revocations. `pnpm e2e` checks both lanes live.
 - Dependencies at their latest: `workers-oauth-provider` 1.2.4, `agents` 0.33, `hono` 4.13.16, `wrangler` 4.158, `vitest` 5.1, `@cloudflare/vitest-plugin` 1.6, `markdownlint-cli2` 0.24. Compatibility date 2026-10-23 and an ES2024 TypeScript target. `pnpm audit` is clean; pnpm overrides patch `re2js` and `katex` (dev-only, via `markdownlint-cli2`) and the `@hono/node-server` audit exception is gone. Supersedes #22.
+- A failed approval form on the Worker answers "Internal server error" without echoing the internal error text.
+- `.mcp.json` adds `spotify-local`, which runs this checkout's stdio server through `pnpm stdio`. A Node test launches that exact entry with synthetic tokens on both protocol eras and fails any tool without `readOnlyHint`, or a writing tool without `destructiveHint`. It replaces the regex check in `check:meta`.
+- Cleanup: one `writeLibrary` replaces seven near-identical library write functions with the same requests, and unused exports, the `clamp` helper and test-only client options are gone. The `build_playlist` README row and the icon script comment match what the code does now.
 
 ## 2026-11-01 — 0.8.0
 

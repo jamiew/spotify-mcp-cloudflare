@@ -21,7 +21,7 @@ function parseBody(text: string): unknown {
 
 export function fakeSpotify(routes: Record<string, (seen: SeenRequest) => Response>) {
 	const seen: SeenRequest[] = [];
-	const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+	const fetchImpl: typeof fetch = async (input, init) => {
 		const req = new Request(input, init);
 		const url = new URL(req.url);
 		const bodyText = await req.text();
@@ -29,7 +29,7 @@ export function fakeSpotify(routes: Record<string, (seen: SeenRequest) => Respon
 			method: req.method,
 			path: url.pathname,
 			query: url.searchParams,
-			// Not every body is JSON — the cover upload posts base64 under image/jpeg.
+			// Not every body is JSON: the cover upload posts base64 under image/jpeg.
 			body: bodyText ? parseBody(bodyText) : undefined,
 			contentType: req.headers.get("Content-Type"),
 			token: req.headers.get("Authorization")?.replace("Bearer ", "") ?? null,
@@ -40,7 +40,7 @@ export function fakeSpotify(routes: Record<string, (seen: SeenRequest) => Respon
 			route?.(record) ??
 			Response.json({ error: { status: 404, message: "Service not found" } }, { status: 404 })
 		);
-	}) as typeof fetch;
+	};
 	return { seen, fetchImpl };
 }
 

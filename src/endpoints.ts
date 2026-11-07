@@ -12,7 +12,7 @@ import type {
 	compactShowSchema,
 	compactTrackSchema,
 } from "./output-schemas";
-import { type SpotifyClient, toId, toPlayableUri, toUri } from "./spotify";
+import { type RequestSpec, type SpotifyClient, toId, toPlayableUri, toUri } from "./spotify";
 import {
 	type Album,
 	type Artist,
@@ -53,7 +53,7 @@ import {
 } from "./types";
 
 /** Restricted-regime search caps page size at 10; works in both regimes. */
-export const SEARCH_PER_REQUEST_CAP = 10;
+const SEARCH_PER_REQUEST_CAP = 10;
 
 export type SearchType = "track" | "artist" | "album" | "playlist";
 
@@ -132,10 +132,6 @@ export async function search(
 	return out;
 }
 
-export function getTrack(client: SpotifyClient, id: string): Promise<Track> {
-	return client.request(`/tracks/${encodeURIComponent(toId(id))}`, trackSchema);
-}
-
 /** Spotify's caps on the batch routes. */
 export const BATCH_MAX = { tracks: 50, artists: 50, albums: 20 };
 
@@ -150,12 +146,14 @@ async function batchOrOneByOne<T, R>(
 	ids: string[],
 	schema: z.ZodType<R>,
 	pick: (res: R) => (T | null)[],
-	one: (id: string) => Promise<T>,
+	itemSchema: z.ZodType<T>,
 ): Promise<T[]> {
 	const bare = ids.map(toId);
 	const oneByOne = async () => {
 		const items: T[] = [];
-		for (const id of bare) items.push(await one(id));
+		for (const id of bare) {
+			items.push(await client.request(`/${kind}/${encodeURIComponent(id)}`, itemSchema));
+		}
 		return items;
 	};
 	if (bare.length === 1) return oneByOne();
@@ -172,14 +170,7 @@ async function batchOrOneByOne<T, R>(
 }
 
 export function getTracks(client: SpotifyClient, ids: string[]): Promise<Track[]> {
-	return batchOrOneByOne(
-		client,
-		"tracks",
-		ids,
-		batchTracksSchema,
-		(r) => r.tracks,
-		(id) => getTrack(client, id),
-	);
+	return batchOrOneByOne(client, "tracks", ids, batchTracksSchema, (r) => r.tracks, trackSchema);
 }
 
 export function getArtists(client: SpotifyClient, ids: string[]): Promise<Artist[]> {
@@ -189,23 +180,15 @@ export function getArtists(client: SpotifyClient, ids: string[]): Promise<Artist
 		ids,
 		batchArtistsSchema,
 		(r) => r.artists,
-		(id) => getArtist(client, id),
+		artistSchema,
 	);
 }
 
 export function getAlbums(client: SpotifyClient, ids: string[]): Promise<Album[]> {
-	return batchOrOneByOne(
-		client,
-		"albums",
-		ids,
-		batchAlbumsSchema,
-		(r) => r.albums,
-		(id) => getAlbum(client, id),
-	);
+	return batchOrOneByOne(client, "albums", ids, batchAlbumsSchema, (r) => r.albums, albumSchema);
 }
 
-export type MediaKind = "show" | "episode" | "audiobook";
-export type LibraryKind = "track" | "album" | "artist" | MediaKind;
+export type LibraryKind = "track" | "album" | "artist" | "show" | "episode" | "audiobook";
 
 /** Restricted caps `/me/library/contains` at 40 URIs; legacy albums stop at 20. */
 export const CONTAINS_MAX = {
@@ -251,14 +234,6 @@ export function libraryContains(
 				query: { ids: bare.join(","), ...legacy.query },
 			}),
 	);
-}
-
-export function getArtist(client: SpotifyClient, id: string): Promise<Artist> {
-	return client.request(`/artists/${encodeURIComponent(toId(id))}`, artistSchema);
-}
-
-export function getAlbum(client: SpotifyClient, id: string): Promise<Album> {
-	return client.request(`/albums/${encodeURIComponent(toId(id))}`, albumSchema);
 }
 
 export type AlbumGroup = "album" | "single" | "appears_on" | "compilation";
@@ -497,7 +472,7 @@ export function unfollowPlaylist(client: SpotifyClient, id: string): Promise<voi
 
 /**
  * Spotify wants base64-encoded JPEG as the raw body under image/jpeg, capped at
- * 256 KB of base64 — the only endpoint here that isn't JSON.
+ * 256 KB of base64. It's the only endpoint here that isn't JSON.
  */
 export function setPlaylistCover(
 	client: SpotifyClient,
@@ -529,33 +504,6 @@ export async function getSavedTracks(
 	return { tracks, addedAt, total: page.total ?? null };
 }
 
-/** Restricted consolidated library writes onto /me/library with `uris`. */
-export function saveTracks(client: SpotifyClient, trackIds: string[]): Promise<void> {
-	const ids = trackIds.map(toId);
-	return client.withFallback(
-		"library-write",
-		() =>
-			client.requestVoid("/me/library", {
-				method: "PUT",
-				query: { uris: ids.map((id) => toUri("track", id)).join(",") },
-			}),
-		() => client.requestVoid("/me/tracks", { method: "PUT", body: { ids } }),
-	);
-}
-
-export function removeSavedTracks(client: SpotifyClient, trackIds: string[]): Promise<void> {
-	const ids = trackIds.map(toId);
-	return client.withFallback(
-		"library-write",
-		() =>
-			client.requestVoid("/me/library", {
-				method: "DELETE",
-				query: { uris: ids.map((id) => toUri("track", id)).join(",") },
-			}),
-		() => client.requestVoid("/me/tracks", { method: "DELETE", body: { ids } }),
-	);
-}
-
 export async function getSavedAlbums(
 	client: SpotifyClient,
 	options: { limit?: number; offset?: number } = {},
@@ -575,32 +523,6 @@ export async function getSavedAlbums(
 	return { albums, addedAt, total: page.total ?? null };
 }
 
-export function saveAlbums(client: SpotifyClient, albumIds: string[]): Promise<void> {
-	const ids = albumIds.map(toId);
-	return client.withFallback(
-		"library-write",
-		() =>
-			client.requestVoid("/me/library", {
-				method: "PUT",
-				query: { uris: ids.map((id) => toUri("album", id)).join(",") },
-			}),
-		() => client.requestVoid("/me/albums", { method: "PUT", body: { ids } }),
-	);
-}
-
-export function removeSavedAlbums(client: SpotifyClient, albumIds: string[]): Promise<void> {
-	const ids = albumIds.map(toId);
-	return client.withFallback(
-		"library-write",
-		() =>
-			client.requestVoid("/me/library", {
-				method: "DELETE",
-				query: { uris: ids.map((id) => toUri("album", id)).join(",") },
-			}),
-		() => client.requestVoid("/me/albums", { method: "DELETE", body: { ids } }),
-	);
-}
-
 export async function getFollowedArtists(
 	client: SpotifyClient,
 	options: { limit?: number } = {},
@@ -611,51 +533,25 @@ export async function getFollowedArtists(
 	return { items: res.artists.items, total: res.artists.total ?? null };
 }
 
-export function followArtists(client: SpotifyClient, artistIds: string[]): Promise<void> {
-	const ids = artistIds.map(toId);
-	return client.withFallback(
-		"library-write",
-		() =>
-			client.requestVoid("/me/library", {
-				method: "PUT",
-				query: { uris: ids.map((id) => toUri("artist", id)).join(",") },
-			}),
-		() =>
-			client.requestVoid("/me/following", {
-				method: "PUT",
-				query: { type: "artist" },
-				body: { ids },
-			}),
-	);
-}
-
-export function unfollowArtists(client: SpotifyClient, artistIds: string[]): Promise<void> {
-	const ids = artistIds.map(toId);
-	return client.withFallback(
-		"library-write",
-		() =>
-			client.requestVoid("/me/library", {
-				method: "DELETE",
-				query: { uris: ids.map((id) => toUri("artist", id)).join(",") },
-			}),
-		() =>
-			client.requestVoid("/me/following", {
-				method: "DELETE",
-				query: { type: "artist" },
-				body: { ids },
-			}),
-	);
-}
-
-/** Restricted folded show, episode and audiobook saves into /me/library too. */
-export function writeMediaLibrary(
+/**
+ * Restricted folded every library save, removal and follow into /me/library,
+ * keyed by URI. Legacy keeps one route per kind: tracks, albums and artists
+ * take a body of ids, while shows, episodes and audiobooks document only a
+ * query.
+ */
+export function writeLibrary(
 	client: SpotifyClient,
 	method: "PUT" | "DELETE",
-	kind: MediaKind,
+	kind: LibraryKind,
 	refs: string[],
 ): Promise<void> {
 	const ids = refs.map(toId);
-	// The legacy routes take ids as a query; shows and audiobooks document no body.
+	const legacy: [string, RequestSpec] =
+		kind === "artist"
+			? ["/me/following", { method, query: { type: "artist" }, body: { ids } }]
+			: kind === "track" || kind === "album"
+				? [`/me/${kind}s`, { method, body: { ids } }]
+				: [`/me/${kind}s`, { method, query: { ids: ids.join(",") } }];
 	return client.withFallback(
 		"library-write",
 		() =>
@@ -663,7 +559,7 @@ export function writeMediaLibrary(
 				method,
 				query: { uris: ids.map((id) => libraryUri(kind, id)).join(",") },
 			}),
-		() => client.requestVoid(`/me/${kind}s`, { method, query: { ids: ids.join(",") } }),
+		() => client.requestVoid(...legacy),
 	);
 }
 
@@ -752,7 +648,6 @@ export function getRecentlyPlayed(
 	});
 }
 
-export type TopItemsType = "artists" | "tracks";
 export type TimeRange = "short_term" | "medium_term" | "long_term";
 
 export function getTopArtists(

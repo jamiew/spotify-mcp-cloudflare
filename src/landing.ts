@@ -25,8 +25,8 @@ export function landingPage(origin: string): string {
 <h1><img src="/icon.svg" alt="" width="28" height="28" style="vertical-align:-5px">
 spotify-mcp-cloudflare <span class="beta">beta</span></h1>
 <p>A remote <a href="https://modelcontextprotocol.io">MCP</a> server for Spotify:
-search, playlists, library, queue and playback as token-efficient tools,
-plus prompts for the things Spotify's API no longer does for you.
+search, playlists, library, queue and playback as compact tools, plus three
+prompt templates.
 Auth is standard MCP OAuth &mdash; connecting opens Spotify's consent screen, no keys to copy.</p>
 
 <h2>Connect from Claude Code</h2>

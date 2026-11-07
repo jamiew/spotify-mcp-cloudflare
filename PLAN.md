@@ -1,4 +1,4 @@
-# PLAN — spotify-mcp-cloudflare
+# PLAN: spotify-mcp-cloudflare
 
 Living status for the canonical TypeScript Spotify implementation. Setup and
 upstream policy citations are in `README.md`; history is in `CHANGELOG.md`.
@@ -55,13 +55,15 @@ user's cache automatically to force it.
 A branch push opens CI but does not deploy: deployment is gated on `main` and
 `DEPLOY_ENABLED`. Do not publish, merge or deploy as part of a code-only update.
 
-On the SDK v2 branch, `pnpm check` passes 175 workerd tests (tool surface on three
+On `main`, `pnpm check` passes 174 workerd tests (tool surface on three
 protocol lanes, plus real grants, refresh, rotation, revocation and stale-token
-401s) and seven Node auth tests, with a 307.6 KiB gzip bundle. The actual stdio
+401s) and nine Node tests, with a 307.2 KiB gzip bundle. One Node test launches
+the `spotify-local` entry from `.mcp.json` on both eras with synthetic tokens and
+checks every tool's behavior hints. The actual stdio
 process serves 44 tools and three prompts on both eras with synthetic tokens, and
 asks for and honors a declined removal on each. `wrangler dev` serves the `/mcp`
 resource metadata and 404s `/sse`. Not yet run: `pnpm e2e` against a deployment
-of this branch, which needs Spotify consent in a browser.
+of SDK v2, which needs Spotify consent in a browser.
 
 Fresh native PKCE consent, real upstream refresh, private token persistence and
 all 17 read tools pass through the actual stdio entrypoint. All 14 non-playback

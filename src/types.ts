@@ -5,16 +5,10 @@ import { z } from "zod";
 // renames, removed fields). Anything Spotify has removed or might remove is
 // optional/nullable.
 
-export const simplifiedArtistSchema = z.object({
+const simplifiedArtistSchema = z.object({
 	id: z.string().nullish(),
 	name: z.string(),
 	uri: z.string().nullish(),
-});
-
-export const imageSchema = z.object({
-	url: z.string(),
-	height: z.number().nullish(),
-	width: z.number().nullish(),
 });
 
 export const artistSchema = z.object({
@@ -132,7 +126,7 @@ export const savedAlbumSchema = z.object({
 	album: simplifiedAlbumSchema.nullish(),
 });
 
-export const showSchema = z.object({
+const showSchema = z.object({
 	id: z.string(),
 	name: z.string(),
 	publisher: z.string().nullish(),
@@ -157,7 +151,7 @@ export const episodeSchema = z.object({
 		.nullish(),
 });
 
-export const audiobookSchema = z.object({
+const audiobookSchema = z.object({
 	id: z.string(),
 	name: z.string(),
 	authors: z.array(z.object({ name: z.string() })).nullish(),
@@ -195,7 +189,7 @@ export const savedAudiobookSchema = z.union([
 // GET /me/following nests its page under `artists` and pages by cursor, not offset.
 export const followedArtistsSchema = z.object({ artists: pagingSchema(artistSchema) });
 
-export const deviceSchema = z.object({
+const deviceSchema = z.object({
 	id: z.string().nullish(),
 	is_active: z.boolean(),
 	name: z.string(),

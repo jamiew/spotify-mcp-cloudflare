@@ -3,6 +3,11 @@
 		"spotify": {
 			"type": "http",
 			"url": "https://spotify-mcp-cloudflare.jamie-7e9.workers.dev/mcp"
+		},
+		"spotify-local": {
+			"type": "stdio",
+			"command": "pnpm",
+			"args": ["--dir", "${CLAUDE_PROJECT_DIR:-.}", "--silent", "stdio"]
 		}
 	}
 }

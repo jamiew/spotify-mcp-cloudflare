@@ -25,7 +25,6 @@ import {
 	compactTrack,
 	controlPlayback,
 	createPlaylist,
-	followArtists,
 	followPlaylist,
 	getAlbums,
 	getArtistAlbums,
@@ -51,18 +50,13 @@ import {
 	LIBRARY_WRITE_MAX,
 	libraryContains,
 	removePlaylistTracks,
-	removeSavedAlbums,
-	removeSavedTracks,
 	reorderPlaylistTracks,
-	saveAlbums,
-	saveTracks,
 	search,
 	setPlaylistCover,
 	transferPlayback,
-	unfollowArtists,
 	unfollowPlaylist,
 	updatePlaylistDetails,
-	writeMediaLibrary,
+	writeLibrary,
 } from "./endpoints";
 import { outputSchemas } from "./output-schemas";
 import {
@@ -82,7 +76,7 @@ export const INSTRUCTIONS = `Spotify for the signed-in user. Tracks, episodes, a
 
 Start from search_music to turn names into IDs. get_playlist returns zero-based positions for reorder_playlist; removal by URI removes all occurrences. Use fetch_all for a bounded multi-page read. Playback tools need Spotify Premium and an open device; if none is active, list_devices then transfer_playback.
 
-The library splits by kind. Tracks: get_saved_tracks, save_tracks, remove_saved_tracks. Albums: get_saved_albums, save_albums, remove_saved_albums. Podcasts: get_saved_shows, save_shows, remove_saved_shows, get_saved_episodes, save_episodes, remove_saved_episodes, and get_show_episodes with resume points. Audiobooks: get_saved_audiobooks, save_audiobooks, remove_saved_audiobooks. Artists are followed rather than saved: get_followed_artists, follow_artists, unfollow_artists. Playlists too: follow_playlist, unfollow_playlist — and unfollowing one you own is how Spotify deletes it.
+The library splits by kind. Tracks: get_saved_tracks, save_tracks, remove_saved_tracks. Albums: get_saved_albums, save_albums, remove_saved_albums. Podcasts: get_saved_shows, save_shows, remove_saved_shows, get_saved_episodes, save_episodes, remove_saved_episodes, and get_show_episodes with resume points. Audiobooks: get_saved_audiobooks, save_audiobooks, remove_saved_audiobooks. Artists are followed rather than saved: get_followed_artists, follow_artists, unfollow_artists. Playlists too: follow_playlist, unfollow_playlist. Unfollowing a playlist you own is how Spotify deletes it.
 
 get_tracks, get_artist and get_album each take up to 50 IDs (20 for albums) in one call. check_library says whether items of any library kind are saved or artists followed, so use it before a bulk save or follow instead of paging the library.
 
@@ -133,7 +127,7 @@ function mapError(e: unknown): ToolResult {
 	if (e instanceof SpotifyApiError) {
 		if (e.status === 404 || e.status === 410) {
 			return toolError(
-				"Spotify could not find that resource — the ID may be wrong, or Spotify no longer offers this capability to third-party apps.",
+				"Spotify could not find that resource. The ID may be wrong, or Spotify no longer offers this capability to third-party apps.",
 			);
 		}
 		// Spotify's own reason is the only way to tell a bad ID from a missing
@@ -150,9 +144,9 @@ function mapError(e: unknown): ToolResult {
 				`Spotify refused this action (forbidden). The account may lack access.${detail}`,
 			);
 		}
-		// A bad request fails the same way every time; only server errors and
-		// rate limits can clear by waiting.
-		if (e.status === 429 || e.status >= 500) {
+		// A bad request fails the same way every time; only server errors can
+		// clear by waiting. The client turns every 429 into RateLimitedError.
+		if (e.status >= 500) {
 			return toolError(
 				`The request to Spotify failed (HTTP ${e.status}). Try again shortly.${detail}`,
 			);
@@ -810,7 +804,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			outputSchema: outputSchemas.save_tracks,
 		},
 		guard(async ({ ids }) => {
-			await saveTracks(sp(), ids);
+			await writeLibrary(sp(), "PUT", "track", ids);
 			return okText(`Saved ${ids.length} track(s).`);
 		}),
 	);
@@ -831,7 +825,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			outputSchema: outputSchemas.remove_saved_tracks,
 		},
 		guard(async ({ ids }) => {
-			await removeSavedTracks(sp(), ids);
+			await writeLibrary(sp(), "DELETE", "track", ids);
 			return okText(`Removed ${ids.length} track(s).`);
 		}),
 	);
@@ -877,7 +871,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			outputSchema: outputSchemas.save_albums,
 		},
 		guard(async ({ ids }) => {
-			await saveAlbums(sp(), ids);
+			await writeLibrary(sp(), "PUT", "album", ids);
 			return okText(`Saved ${ids.length} album(s).`);
 		}),
 	);
@@ -898,7 +892,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			outputSchema: outputSchemas.remove_saved_albums,
 		},
 		guard(async ({ ids }) => {
-			await removeSavedAlbums(sp(), ids);
+			await writeLibrary(sp(), "DELETE", "album", ids);
 			return okText(`Removed ${ids.length} album(s).`);
 		}),
 	);
@@ -934,7 +928,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			outputSchema: outputSchemas.follow_artists,
 		},
 		guard(async ({ ids }) => {
-			await followArtists(sp(), ids);
+			await writeLibrary(sp(), "PUT", "artist", ids);
 			return okText(`Followed ${ids.length} artist(s).`);
 		}),
 	);
@@ -955,7 +949,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			outputSchema: outputSchemas.unfollow_artists,
 		},
 		guard(async ({ ids }) => {
-			await unfollowArtists(sp(), ids);
+			await writeLibrary(sp(), "DELETE", "artist", ids);
 			return okText(`Unfollowed ${ids.length} artist(s).`);
 		}),
 	);
@@ -1034,7 +1028,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			outputSchema: outputSchemas.save_shows,
 		},
 		guard(async ({ ids }) => {
-			await writeMediaLibrary(sp(), "PUT", "show", ids);
+			await writeLibrary(sp(), "PUT", "show", ids);
 			return okText(`Saved ${ids.length} show(s).`);
 		}),
 	);
@@ -1055,7 +1049,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			outputSchema: outputSchemas.remove_saved_shows,
 		},
 		guard(async ({ ids }) => {
-			await writeMediaLibrary(sp(), "DELETE", "show", ids);
+			await writeLibrary(sp(), "DELETE", "show", ids);
 			return okText(`Removed ${ids.length} show(s).`);
 		}),
 	);
@@ -1121,7 +1115,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			outputSchema: outputSchemas.save_episodes,
 		},
 		guard(async ({ ids }) => {
-			await writeMediaLibrary(sp(), "PUT", "episode", ids);
+			await writeLibrary(sp(), "PUT", "episode", ids);
 			return okText(`Saved ${ids.length} episode(s).`);
 		}),
 	);
@@ -1142,7 +1136,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			outputSchema: outputSchemas.remove_saved_episodes,
 		},
 		guard(async ({ ids }) => {
-			await writeMediaLibrary(sp(), "DELETE", "episode", ids);
+			await writeLibrary(sp(), "DELETE", "episode", ids);
 			return okText(`Removed ${ids.length} episode(s).`);
 		}),
 	);
@@ -1188,7 +1182,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			outputSchema: outputSchemas.save_audiobooks,
 		},
 		guard(async ({ ids }) => {
-			await writeMediaLibrary(sp(), "PUT", "audiobook", ids);
+			await writeLibrary(sp(), "PUT", "audiobook", ids);
 			return okText(`Saved ${ids.length} audiobook(s).`);
 		}),
 	);
@@ -1209,7 +1203,7 @@ export function registerTools(server: McpServer, sp: () => SpotifyClient) {
 			outputSchema: outputSchemas.remove_saved_audiobooks,
 		},
 		guard(async ({ ids }) => {
-			await writeMediaLibrary(sp(), "DELETE", "audiobook", ids);
+			await writeLibrary(sp(), "DELETE", "audiobook", ids);
 			return okText(`Removed ${ids.length} audiobook(s).`);
 		}),
 	);

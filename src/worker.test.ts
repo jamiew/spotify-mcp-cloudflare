@@ -26,6 +26,16 @@ describe("worker", () => {
 		expect(res.status).toBe(401);
 	});
 
+	it("answers a malformed approval form without echoing the internal error", async () => {
+		const res = await SELF.fetch("https://example.com/authorize", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: "{}",
+		});
+		expect(res.status).toBe(500);
+		expect(await res.text()).toBe("Internal server error");
+	});
+
 	it("registers a client via dynamic client registration", async () => {
 		const res = await SELF.fetch("https://example.com/register", {
 			method: "POST",

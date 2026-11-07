@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { fakeSpotify, type SeenRequest, staticTokens } from "./fake-spotify";
 import {
-	clamp,
 	RateLimitedError,
 	ResponseShapeError,
 	SpotifyApiError,
@@ -29,15 +28,6 @@ function makeClient(
 const nameSchema = z.object({ name: z.string() });
 
 describe("SpotifyClient", () => {
-	it("requests with a bearer token and parses the response", async () => {
-		const { client, seen } = makeClient({
-			"GET /v1/thing": () => Response.json({ name: "x", extra: 1 }),
-		});
-		const res = await client.request("/thing", nameSchema);
-		expect(res).toEqual({ name: "x" });
-		expect(seen[0]?.token).toBe("tok");
-	});
-
 	it("refreshes and retries once on 401", async () => {
 		let calls = 0;
 		const { client, seen } = makeClient({
@@ -50,7 +40,7 @@ describe("SpotifyClient", () => {
 		});
 		const res = await client.request("/thing", nameSchema);
 		expect(res.name).toBe("after-refresh");
-		expect(seen[1]?.token).toBe("tok2");
+		expect(seen.map((s) => s.token)).toEqual(["tok", "tok2"]);
 	});
 
 	it("throws SpotifyAuthError when the refreshed token also 401s", async () => {
@@ -76,7 +66,6 @@ describe("SpotifyClient", () => {
 				sleep: async (ms) => {
 					waits.push(ms);
 				},
-				maxRetryAfterSeconds: 5,
 			},
 		);
 		const res = await client.request("/thing", nameSchema);
@@ -106,11 +95,10 @@ describe("SpotifyClient", () => {
 		expect(waits).toEqual([]);
 	});
 
-	it("gives up with RateLimitedError after max 429 retries", async () => {
-		const { client, seen } = makeClient(
-			{ "GET /v1/thing": () => Response.json({}, { status: 429 }) },
-			{ maxRateLimitRetries: 2 },
-		);
+	it("gives up with RateLimitedError after two 429 retries", async () => {
+		const { client, seen } = makeClient({
+			"GET /v1/thing": () => Response.json({}, { status: 429 }),
+		});
 		await expect(client.request("/thing", nameSchema)).rejects.toThrow(RateLimitedError);
 		expect(seen.length).toBe(3);
 	});
@@ -235,7 +223,7 @@ describe("SpotifyClient", () => {
 	});
 });
 
-describe("toUri / toId / clamp", () => {
+describe("toUri / toId", () => {
 	it("normalizes ids and uris both directions", () => {
 		expect(toUri("track", "abc")).toBe("spotify:track:abc");
 		expect(toUri("track", "spotify:track:abc")).toBe("spotify:track:abc");
@@ -253,11 +241,5 @@ describe("toUri / toId / clamp", () => {
 		expect(toId("https://open.spotify.com/playlist/37i9dQZF1DX")).toBe("37i9dQZF1DX");
 		expect(toId("spotify:user:someone:playlist:xyz")).toBe("xyz");
 		expect(toUri("track", "spotify:local:a:b:c:1")).toBe("spotify:local:1");
-	});
-
-	it("clamps into range", () => {
-		expect(clamp(0, 1, 50)).toBe(1);
-		expect(clamp(99, 1, 50)).toBe(50);
-		expect(clamp(10, 1, 50)).toBe(10);
 	});
 });
