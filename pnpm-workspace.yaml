@@ -16,3 +16,6 @@ overrides:
   # GHSA-gg6h-894w-4m9c, GHSA-238p-pmpm-9mq7: dev-only via markdownlint-cli2.
   "re2js@<2.8.7": "^2.8.7"
   "katex@<0.18.2": "^0.18.2"
+  # GHSA-qv5m-9pm6-hqp3, GHSA-jpvv-r467-5p4w: Node-only HTTP adapter pulled in via
+  # agents -> @modelcontextprotocol/sdk; the Worker never loads it.
+  "@hono/node-server@>=2.0.0 <2.1.6": "^2.1.6"
