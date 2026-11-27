@@ -4,6 +4,12 @@ allowBuilds:
   sharp: true
   workerd: true
 
+# hono 4.13.23 carries GHSA-656w-x92q-369m, GHSA-586x-c76g-h528 and
+# GHSA-mhwf-w6q6-q58w and is newer than pnpm's minimum release age. Drop this
+# entry once that age passes.
+minimumReleaseAgeExclude:
+  - hono@4.13.23
+
 # GHSA-2v37-7h3g-55p8: nanoid custom generators loop on size 0. Reached only
 # through vite -> postcss (a build-time path), and `pnpm update` won't move the
 # transitive past postcss's resolved pin. Stay on 3.x: postcss requires it as CJS.
